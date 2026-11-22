@@ -1,6 +1,6 @@
 {
   "name": "echo-ambient-player",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "MeloPair music player with shared listening rooms, real-time sync, and synced lyrics",
   "main": "main.js",
   "scripts": {
@@ -46,6 +46,14 @@
       {
         "from": "yt-dlp.exe",
         "to": "bin/yt-dlp.exe"
+      },
+      {
+        "from": "build_support/vc-runtime/vcruntime140.dll",
+        "to": "bin/vcruntime140.dll"
+      },
+      {
+        "from": "build_support/vc-runtime/msvcp140.dll",
+        "to": "bin/msvcp140.dll"
       },
       {
         "from": "node_modules/ffmpeg-static/ffmpeg.exe",

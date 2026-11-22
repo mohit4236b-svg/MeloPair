@@ -86,7 +86,12 @@ function searchSaavn(query) {
             const dur = parseInt(r.duration || r.more_info?.duration || 0, 10);
             const id = 'saavn_' + (r.id || r.song_id);
             if (streamUrl) {
-              streamCache.set(id, { url: streamUrl, timestamp: Date.now() });
+              streamCache.set(id, {
+                url: streamUrl,
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Referer': 'https://www.jiosaavn.com/' },
+                source: 'saavn',
+                timestamp: Date.now()
+              });
             }
             const sec = dur > 0 ? dur : 210;
             const m = Math.floor(sec / 60);
@@ -125,7 +130,12 @@ function resolveSaavnTrack(songId) {
           if (song && song.encrypted_media_url) {
             const url = decryptSaavnMediaUrl(song.encrypted_media_url);
             if (url) {
-              streamCache.set(songId, { url, timestamp: Date.now() });
+              streamCache.set(songId, {
+                url,
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Referer': 'https://www.jiosaavn.com/' },
+                source: 'saavn',
+                timestamp: Date.now()
+              });
               return resolve(url);
             }
           }
@@ -708,71 +718,115 @@ function startAudioProxy() {
       }
     }
 
-    // 3. Audio Streaming Proxy with Byte-Range Support & Universal CORS
-    if (reqUrl.pathname === '/stream') {
+    if (reqUrl.pathname === '/api/stream-status') {
+      const videoId = reqUrl.searchParams.get('id') || '';
+      const reason = streamFailureReasons.get(videoId) || '';
+      res.writeHead(200, { ...corsHeaders, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: !reason, reason }));
+    }
+
+    // 3. Local audio proxy. /stream remains an alias for existing Rooms clients;
+    // /proxy-audio is used by normal desktop playback to inject extractor headers.
+    if (reqUrl.pathname === '/stream' || reqUrl.pathname === '/proxy-audio') {
       const videoId = reqUrl.searchParams.get('id');
       const streamMetadata = {
         title: reqUrl.searchParams.get('title') || '',
         artist: reqUrl.searchParams.get('artist') || '',
         duration: Number(reqUrl.searchParams.get('duration')) || 0
       };
-      console.log('[DIAG-AUDIO] HTTP GET /stream for videoId:', videoId, 'Range:', req.headers.range || 'full');
+      console.log('[DIAG-AUDIO] HTTP', req.method, reqUrl.pathname, 'for videoId:', videoId, 'Range:', req.headers.range || 'full');
       if (!videoId) {
         res.writeHead(400, { ...corsHeaders, 'Content-Type': 'text/plain' });
         return res.end('Missing video id');
       }
 
       try {
-        const streamUrl = await resolveStreamUrl(videoId, streamMetadata);
-        if (!streamUrl) {
-          res.writeHead(502, { ...corsHeaders, 'Content-Type': 'text/plain' });
-          return res.end('Unable to resolve audio stream');
+        let streamInfo = await resolveStreamUrl(videoId, streamMetadata);
+        if (!streamInfo) {
+          const reason = streamFailureReasons.get(videoId) || 'No playable audio stream was returned by the available sources.';
+          res.writeHead(502, { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8' });
+          return res.end(`Audio stream unavailable: ${reason}`);
         }
 
-        const headers = {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-        };
-        if (req.headers.range) {
-          headers['Range'] = req.headers.range;
-        }
-
-        pipeWithRedirects(streamUrl, headers, (err, clientRes) => {
-          if (err || !clientRes) {
-            console.error('Stream pipe error:', err);
-            if (!res.headersSent) {
-              res.writeHead(500, { ...corsHeaders, 'Content-Type': 'text/plain' });
-              res.end('Proxy streaming error');
-            }
-            return;
-          }
-
-          const proxyHeaders = {
-            ...corsHeaders,
-            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
-            'Content-Type': clientRes.headers['content-type'] || 'audio/webm',
-            'Accept-Ranges': 'bytes'
+        let didRefresh = false;
+        const forwardAudio = (currentInfo) => {
+          const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Referer': 'https://www.youtube.com/'
           };
-          if (clientRes.headers['content-length']) {
-            proxyHeaders['Content-Length'] = clientRes.headers['content-length'];
-          }
-          if (clientRes.headers['content-range']) {
-            proxyHeaders['Content-Range'] = clientRes.headers['content-range'];
-          }
+          Object.assign(headers, currentInfo.headers || {});
+          if (req.headers.range) headers.Range = req.headers.range;
 
-          res.writeHead(clientRes.statusCode, proxyHeaders);
-          clientRes.pipe(res);
+          pipeWithRedirects(currentInfo.url, headers, (err, clientRes) => {
+            if (err || !clientRes) {
+              const reason = err?.message || 'Upstream audio request failed.';
+              streamFailureReasons.set(videoId, reason.slice(0, 360));
+              appendStreamDebug(`Proxy request failed for videoId=${videoId}: ${reason}`);
+              console.error('[Stream Proxy] Upstream audio request failed:', reason);
+              if (!res.headersSent) {
+                res.writeHead(502, { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8' });
+                res.end(`Audio proxy request failed: ${reason}`);
+              }
+              return;
+            }
 
-          req.on('close', () => {
-            clientRes.destroy();
+            if ([403, 410].includes(clientRes.statusCode) && !didRefresh && !videoId.startsWith('saavn_')) {
+              didRefresh = true;
+              clientRes.resume();
+              streamCache.delete(videoId);
+              resolveStreamUrl(videoId, streamMetadata, { forceRefresh: true }).then(refreshed => {
+                if (refreshed && !res.destroyed) return forwardAudio(refreshed);
+                const reason = `The upstream audio host returned HTTP ${clientRes.statusCode} after refreshing the stream.`;
+                streamFailureReasons.set(videoId, reason);
+                if (!res.headersSent) {
+                  res.writeHead(clientRes.statusCode, { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8' });
+                  res.end(reason);
+                }
+              }).catch(refreshError => {
+                if (!res.headersSent) {
+                  res.writeHead(502, { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8' });
+                  res.end(`Audio stream refresh failed: ${refreshError.message}`);
+                }
+              });
+              return;
+            }
+
+            if (clientRes.statusCode >= 400) {
+              const reason = `The upstream audio host returned HTTP ${clientRes.statusCode}.`;
+              streamFailureReasons.set(videoId, reason);
+              appendStreamDebug(`Upstream HTTP ${clientRes.statusCode} for videoId=${videoId}.`);
+            } else {
+              streamFailureReasons.delete(videoId);
+            }
+
+            const proxyHeaders = {
+              ...corsHeaders,
+              'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0',
+              'Content-Type': clientRes.headers['content-type'] || 'audio/webm',
+              'Accept-Ranges': clientRes.headers['accept-ranges'] || 'bytes'
+            };
+            for (const headerName of ['content-length', 'content-range', 'last-modified', 'etag']) {
+              if (clientRes.headers[headerName]) {
+                proxyHeaders[headerName.split('-').map(part => part[0].toUpperCase() + part.slice(1)).join('-')] = clientRes.headers[headerName];
+              }
+            }
+            res.writeHead(clientRes.statusCode || 200, proxyHeaders);
+            if (req.method === 'HEAD') {
+              clientRes.destroy();
+              return res.end();
+            }
+            clientRes.pipe(res);
+            req.on('close', () => clientRes.destroy());
           });
-        });
+        };
+        forwardAudio(streamInfo);
       } catch (err) {
         console.error('Stream resolution error:', err);
         if (!res.headersSent) {
-          res.writeHead(500, { ...corsHeaders, 'Content-Type': 'text/plain' });
-          res.end('Error resolving audio');
+          res.writeHead(502, { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end(`Error resolving audio: ${err.message}`);
         }
       }
     } else {
@@ -892,69 +946,52 @@ function startAudioProxy() {
 });
 }
 
-function ensureYtDlpExtracted() {
+const YT_DLP_DLLS = ['vcruntime140.dll', 'msvcp140.dll'];
+const streamFailureReasons = new Map();
+
+function getBundledBinaryPath(name) {
+  if (app.isPackaged) {
+    const packagedPath = path.join(process.resourcesPath, 'bin', name);
+    return fs.existsSync(packagedPath) ? packagedPath : null;
+  }
+  const devCandidates = [
+    path.join(__dirname, name),
+    path.join(__dirname, 'build_support', 'vc-runtime', name),
+    path.join(__dirname, 'resources', 'bin', name)
+  ];
+  return devCandidates.find(candidate => fs.existsSync(candidate)) || null;
+}
+
+function ensureUserBinaries() {
   try {
-    const userDataDir = app.getPath('userData');
-    const targetPath = path.join(userDataDir, 'yt-dlp.exe');
-    if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 50000) {
-      return targetPath;
-    }
-    const sources = [
-      path.join(process.resourcesPath || '', 'bin', 'yt-dlp.exe'),
-      path.join(process.resourcesPath || '', 'app.asar.unpacked', 'yt-dlp.exe'),
-      path.join(__dirname, 'yt-dlp.exe').replace('app.asar', 'app.asar.unpacked'),
-      ...(!app.isPackaged ? [path.join(__dirname, 'yt-dlp.exe')] : [])
-    ];
-    for (const src of sources) {
-      if (!src.includes('app.asar\\') && !src.includes('app.asar/') && fs.existsSync(src)) {
-        try {
-          fs.copyFileSync(src, targetPath);
-          console.log('[yt-dlp] Mirrored binary to userData:', targetPath);
-          return targetPath;
-        } catch (copyErr) {
-          console.warn('[yt-dlp] Copy error:', copyErr.message);
-        }
+    const userBinDir = path.join(app.getPath('userData'), 'bin');
+    fs.mkdirSync(userBinDir, { recursive: true });
+    for (const name of ['yt-dlp.exe', ...YT_DLP_DLLS]) {
+      const bundledPath = getBundledBinaryPath(name);
+      if (!bundledPath) {
+        if (name === 'yt-dlp.exe') console.error('[yt-dlp] Bundled executable is missing from resources/bin.');
+        continue;
+      }
+      const targetPath = path.join(userBinDir, name);
+      const sourceSize = fs.statSync(bundledPath).size;
+      const targetSize = fs.existsSync(targetPath) ? fs.statSync(targetPath).size : 0;
+      if (!targetSize || targetSize < sourceSize) {
+        fs.copyFileSync(bundledPath, targetPath);
+        console.log(`[Media Tools] Installed bundled ${name} into userData/bin.`);
       }
     }
+    const ytDlpPath = path.join(userBinDir, 'yt-dlp.exe');
+    return fs.existsSync(ytDlpPath) && fs.statSync(ytDlpPath).size > 50000 ? ytDlpPath : null;
   } catch (err) {
-    console.warn('[yt-dlp] ensureYtDlpExtracted warning:', err.message);
+    console.error('[Media Tools] Could not prepare writable userData/bin:', err.message);
+    return null;
   }
-  return null;
 }
 
 function getYtDlpPath() {
-  // Prefer the writable userData copy so self-updates never target the
-  // read-only installation directory or resources folder.
-  try {
-    const userDataExe = path.join(app.getPath('userData'), 'yt-dlp.exe');
-    if (fs.existsSync(userDataExe) && fs.statSync(userDataExe).size > 50000) {
-      return userDataExe;
-    }
-  } catch (e) {}
-
-  // In packaged builds, copy the bundled extraResource into userData before
-  // spawning it. Never depend on a developer PATH or run from app.asar.
-  if (app.isPackaged) {
-    const extracted = ensureYtDlpExtracted();
-    if (extracted) return extracted;
-    console.warn('[yt-dlp] Could not prepare writable userData copy.');
-    return null;
-  }
-
-  // 3. Dev mode path (only if physically unbundled on disk, never within app.asar)
-  if (!app.isPackaged) {
-    const devPath = path.join(__dirname, 'yt-dlp.exe');
-    if (fs.existsSync(devPath) && !devPath.includes('app.asar')) {
-      return devPath;
-    }
-  }
-
-  // 4. Mirror to userData if not yet present
-  const extracted = ensureYtDlpExtracted();
-  if (extracted) return extracted;
-
-  // No developer-only Python path or unverified PATH command in production.
-  return null;
+  // The executable and its VC++ runtime DLLs share a writable folder. This
+  // avoids app.asar / Program Files execution and DLL search-path failures.
+  return ensureUserBinaries();
 }
 
 function getFfmpegPath() {
@@ -987,25 +1024,156 @@ function getFfprobePath() {
 
 const musicVideoTitlePattern = /\b(?:official\s+music\s+video|official\s+video|music\s+video|video\s+song|full\s+video|lyrical\s+video|teaser|trailer|jukebox|1\s*hour|mashup)\b/i;
 
-function runYtDlp(args, timeoutMs = 30000) {
+function appendStreamDebug(message) {
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'stream-debug.log'), `[${new Date().toISOString()}] ${message}\n`, 'utf8');
+  } catch (error) {
+    console.warn('[Stream Proxy] Could not write stream-debug.log:', error.message);
+  }
+}
+
+function runYtDlpOnce(args, timeoutMs = 15000) {
   return new Promise((resolve) => {
     const ytDlpCmd = getYtDlpPath();
-    if (!ytDlpCmd) return resolve({ code: -1, stdout: '', stderr: 'Bundled yt-dlp.exe is missing.' });
-    const child = spawn(ytDlpCmd, args, { windowsHide: true });
+    if (!ytDlpCmd) return resolve({ code: -1, stdout: '', stderr: 'Bundled yt-dlp.exe or its VC++ runtime is missing.' });
     let stdout = '';
     let stderr = '';
-    const timeout = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on('data', data => { stdout += data.toString(); });
-    child.stderr.on('data', data => { stderr += data.toString(); });
-    child.on('error', error => {
+    let finished = false;
+    let timedOut = false;
+    const child = spawn(ytDlpCmd, args, { windowsHide: true, cwd: path.dirname(ytDlpCmd) });
+    const finish = result => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timeout);
-      resolve({ code: -1, stdout, stderr: `${stderr}\n${error.message}` });
-    });
-    child.on('close', code => {
-      clearTimeout(timeout);
-      resolve({ code, stdout, stderr });
-    });
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      try { child.kill(); } catch (error) {}
+    }, timeoutMs);
+    child.stdout?.on('data', data => { stdout += data.toString(); });
+    child.stderr?.on('data', data => { stderr += data.toString(); });
+    child.on('error', error => finish({ code: -1, stdout, stderr: `${stderr}\n${error.message}`, timedOut }));
+    child.on('close', code => finish({ code: timedOut ? -1 : code, stdout, stderr: timedOut ? `${stderr}\nProcess timed out after ${timeoutMs}ms.` : stderr, timedOut }));
   });
+}
+
+async function runYtDlp(args, timeoutMs = 15000) {
+  const first = await runYtDlpOnce(args, timeoutMs);
+  if (first.code === 0) return first;
+  appendStreamDebug(`yt-dlp attempt 1 failed (exit=${first.code}, timeout=${Boolean(first.timedOut)}).\nargs=${args.join(' ')}\nstderr=${first.stderr || '(empty)'}`);
+  if (args.includes('--force-ipv4')) return first;
+  const retry = await runYtDlpOnce([...args, '--force-ipv4'], timeoutMs);
+  if (retry.code !== 0) appendStreamDebug(`yt-dlp IPv4 retry failed (exit=${retry.code}, timeout=${Boolean(retry.timedOut)}).\nargs=${[...args, '--force-ipv4'].join(' ')}\nstderr=${retry.stderr || '(empty)'}`);
+  return retry;
+}
+
+function parseYtDlpJson(stdout) {
+  const lines = String(stdout || '').trim().split(/\r?\n/).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try { return JSON.parse(lines[i]); } catch (error) {}
+  }
+  return null;
+}
+
+function normalizeStreamResult(value, source = 'youtube') {
+  if (!value) return null;
+  if (typeof value === 'string') return { url: value, headers: {}, source };
+  if (!value.url) return null;
+  const allowedHeaders = new Set(['user-agent', 'referer', 'cookie', 'accept', 'accept-language', 'origin']);
+  const headers = {};
+  for (const [name, headerValue] of Object.entries(value.headers || value.http_headers || {})) {
+    if (allowedHeaders.has(name.toLowerCase()) && typeof headerValue === 'string' && headerValue.trim()) {
+      headers[name] = headerValue;
+    }
+  }
+  return { url: value.url, headers, source: value.source || source, timestamp: value.timestamp || Date.now() };
+}
+
+function requestText(url, options = {}, timeoutMs = 9000) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const client = parsed.protocol === 'https:' ? https : http;
+    let settled = false;
+    const req = client.request(parsed, { method: options.method || 'GET', headers: options.headers || {} }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => {
+        body += chunk;
+        if (body.length > 6 * 1024 * 1024) req.destroy(new Error('Response exceeded 6 MB limit'));
+      });
+      res.on('end', () => {
+        if (settled) return;
+        settled = true;
+        resolve({ statusCode: res.statusCode || 0, headers: res.headers, body });
+      });
+    });
+    const timer = setTimeout(() => req.destroy(new Error(`Request timed out after ${timeoutMs}ms`)), timeoutMs);
+    req.on('error', error => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    });
+    req.on('close', () => clearTimeout(timer));
+    req.end(options.body);
+  });
+}
+
+async function resolveInnerTubeAudio(videoId) {
+  try {
+    const page = await requestText(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&hl=en&gl=US`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+    const apiKey = page.body.match(/\bINNERTUBE_API_KEY\s*["']?\s*[:=]\s*["']([^"']+)["']/)?.[1];
+    if (!apiKey) throw new Error('YouTube page did not provide an InnerTube API key.');
+    const clients = [
+      { name: 'ANDROID', version: '20.10.38', userAgent: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip' },
+      { name: 'IOS', version: '20.10.4', userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_1 like Mac OS X)' }
+    ];
+    for (const client of clients) {
+      const body = JSON.stringify({
+        videoId,
+        contentCheckOk: true,
+        racyCheckOk: true,
+        context: { client: { clientName: client.name, clientVersion: client.version, hl: 'en', gl: 'US' } }
+      });
+      const response = await requestText(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
+        method: 'POST',
+        body,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Origin': 'https://www.youtube.com',
+          'Referer': `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
+          'User-Agent': client.userAgent
+        }
+      });
+      if (response.statusCode < 200 || response.statusCode >= 300) continue;
+      const player = JSON.parse(response.body);
+      const formats = (player.streamingData?.adaptiveFormats || []).filter(format =>
+        String(format.mimeType || '').startsWith('audio/') && typeof format.url === 'string' && format.url.startsWith('http')
+      );
+      formats.sort((a, b) => Number(b.bitrate || 0) - Number(a.bitrate || 0));
+      const format = formats[0];
+      if (format?.url) {
+        return normalizeStreamResult({
+          url: format.url,
+          source: `innertube-${client.name.toLowerCase()}`,
+          headers: {
+            'User-Agent': client.userAgent,
+            'Referer': `https://www.youtube.com/watch?v=${videoId}`
+          }
+        });
+      }
+    }
+    throw new Error('InnerTube did not return a directly playable audio format.');
+  } catch (error) {
+    console.warn('[Stream Proxy] InnerTube audio fallback failed:', error.message);
+    return null;
+  }
 }
 
 function normalizeStreamArtist(artist = '') {
@@ -1039,14 +1207,14 @@ async function findOfficialAudioVideo(metadata = {}) {
   }
 }
 
-async function resolveStreamUrl(videoId, metadata = {}) {
+async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
   if (!videoId) return null;
 
-  if (streamCache.has(videoId)) {
+  if (!options.forceRefresh && streamCache.has(videoId)) {
     const cached = streamCache.get(videoId);
     if (Date.now() - cached.timestamp < 1000 * 60 * 60 * 5) {
-      console.log('[DIAG-AUDIO] resolveStreamUrl CACHE HIT for videoId:', videoId, 'cachedUrl:', cached.url.slice(0, 80) + '...');
-      return cached.url;
+      console.log('[DIAG-AUDIO] resolveStreamUrl CACHE HIT for videoId:', videoId, 'source:', cached.source || 'cached');
+      return normalizeStreamResult(cached);
     }
   }
 
@@ -1054,7 +1222,17 @@ async function resolveStreamUrl(videoId, metadata = {}) {
 
   if (videoId.startsWith('saavn_')) {
     const saavnUrl = await resolveSaavnTrack(videoId);
-    if (saavnUrl) return saavnUrl;
+    if (saavnUrl) {
+      const saavnInfo = normalizeStreamResult(streamCache.get(videoId) || {
+        url: saavnUrl,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Referer': 'https://www.jiosaavn.com/' },
+        source: 'saavn',
+        timestamp: Date.now()
+      }, 'saavn');
+      streamCache.set(videoId, saavnInfo);
+      streamFailureReasons.delete(videoId);
+      return saavnInfo;
+    }
   }
 
   const metadataDuration = Number(metadata.duration) || 0;
@@ -1077,14 +1255,44 @@ async function resolveStreamUrl(videoId, metadata = {}) {
     if (!selectedVideoId) return null;
   }
 
-  const result = await runYtDlp(['-f', 'ba/b', '-g', `https://www.youtube.com/watch?v=${selectedVideoId}`]);
-  const url = result.stdout.trim().split(/\r?\n/).map(line => line.trim()).find(line => line.startsWith('http'));
-  if (result.code === 0 && url) {
-    streamCache.set(videoId, { url, timestamp: Date.now() });
-    console.log('[Stream Proxy] Extracted audio stream URL for', videoId, 'from', selectedVideoId);
-    return url;
+  const sourceUrl = `https://www.youtube.com/watch?v=${selectedVideoId}`;
+  const args = [
+    '--no-playlist', '--no-warnings',
+    '-f', 'bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]/bestaudio/best',
+    '--extractor-args', 'youtube:player_client=android,ios,web',
+    '-j', sourceUrl
+  ];
+  const result = await runYtDlp(args, 15000);
+  const info = result.code === 0 ? parseYtDlpJson(result.stdout) : null;
+  const selectedFormat = info?.requested_formats?.find(format => format?.url) || info?.requested_downloads?.find(format => format?.url) || info;
+  const resolvedUrl = selectedFormat?.url || info?.url;
+  if (resolvedUrl) {
+    const streamInfo = normalizeStreamResult({
+      url: resolvedUrl,
+      headers: { ...(info?.http_headers || {}), ...(selectedFormat?.http_headers || {}) },
+      source: 'yt-dlp',
+      timestamp: Date.now()
+    });
+    streamCache.set(videoId, streamInfo);
+    streamFailureReasons.delete(videoId);
+    console.log('[Stream Proxy] Extracted audio stream for', videoId, 'from', selectedVideoId, 'via yt-dlp.');
+    return streamInfo;
   }
-  console.warn(`[Stream Proxy] yt-dlp exit ${result.code}:`, result.stderr.slice(0, 200));
+
+  const ytDlpReason = result.stderr?.trim() || `yt-dlp exited with code ${result.code}.`;
+  console.warn(`[Stream Proxy] yt-dlp audio extraction failed for ${videoId}:`, ytDlpReason.slice(0, 400));
+  const innerTubeInfo = await resolveInnerTubeAudio(selectedVideoId);
+  if (innerTubeInfo) {
+    const streamInfo = { ...innerTubeInfo, timestamp: Date.now() };
+    streamCache.set(videoId, streamInfo);
+    streamFailureReasons.delete(videoId);
+    console.info(`[Stream Proxy] InnerTube provided the audio fallback for ${videoId}.`);
+    return streamInfo;
+  }
+
+  const reason = ytDlpReason.replace(/[\r\n]+/g, ' ').slice(0, 360);
+  streamFailureReasons.set(videoId, reason);
+  appendStreamDebug(`Audio resolution failed for videoId=${videoId}: ${reason}`);
   return null;
 }
 
@@ -1328,7 +1536,7 @@ app.whenReady().then(() => {
   } catch (e) {
     console.warn('[Firebase Auth] Could not register the EchoPlayer sign-in return link:', e.message);
   }
-  ensureYtDlpExtracted();
+  ensureUserBinaries();
   startAudioProxy();
   createWindow();
   const startupAuthUrl = process.argv.find(arg => /^echoplayer:\/\/auth(?:[/?#]|$)/i.test(arg));
@@ -1361,7 +1569,7 @@ ipcMain.handle('get-stream-url', async (event, track) => {
   if (metadata.title) params.set('title', String(metadata.title));
   if (metadata.artist) params.set('artist', String(metadata.artist));
   if (metadata.duration) params.set('duration', String(metadata.duration));
-  return `http://127.0.0.1:${proxyPort}/stream?${params.toString()}`;
+  return `http://127.0.0.1:${proxyPort}/proxy-audio?${params.toString()}`;
 });
 
 // Search music: YouTube Music library is PRIMARY + Saavn enrichment
@@ -1634,7 +1842,7 @@ async function extractYouTubeTimedLyrics(videoId) {
       '--skip-download',
       '-o', `${tmpOut}.%(ext)s`,
       `https://www.youtube.com/watch?v=${videoId}`
-    ]);
+    ], { windowsHide: true, cwd: path.dirname(ytDlpCmd) });
 
     child.on('error', () => {
       if (!resolved) {
@@ -2010,7 +2218,7 @@ ipcMain.handle('download-track', async (event, { id, title, artist }) => {
       '-o', path.join(musicDir, '%(title)s.%(ext)s'),
       '--',
       `https://www.youtube.com/watch?v=${safeId}`
-    ], { env: { ...process.env, PATH: mediaToolPath } });
+    ], { windowsHide: true, cwd: path.dirname(ytDlpCmd), env: { ...process.env, PATH: mediaToolPath } });
 
     child.stdout.on('data', (d) => {
       const text = d.toString();

@@ -125,6 +125,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if (audioB) audioB.crossOrigin = 'anonymous';
   }
 
+  const reportAudioSourceFailure = async (deck, deckName) => {
+    if (!deck?.dataset?.trackId) return;
+    const mediaCode = deck.error?.code || 0;
+    console.warn(`[Audio Engine] ${deckName} media error code=${mediaCode}, networkState=${deck.networkState}, readyState=${deck.readyState}, src=${deck.currentSrc || deck.src}`);
+    if (!isElectron || !String(deck.currentSrc || deck.src).includes('/proxy-audio')) return;
+    try {
+      const statusUrl = new URL(`/api/stream-status?id=${encodeURIComponent(deck.dataset.trackId)}`, deck.currentSrc || deck.src);
+      const response = await fetch(statusUrl.href, { headers: { 'Bypass-Tunnel-Reminder': 'true' } });
+      if (!response.ok) return;
+      const status = await response.json();
+      if (status?.reason && deck.dataset.trackId === String(currentTrack?.id)) {
+        showToast(`Audio source error: ${status.reason}`);
+      }
+    } catch (error) {
+      console.debug('[Audio Engine] Could not read local stream diagnostic:', error.message);
+    }
+  };
+
   if (audioA) {
     audioA.volume = 1;
     audioA.hasFiredPlayingEvent = false;
@@ -135,6 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
     audioA.addEventListener('waiting', () => { audioA.hasFiredPlayingEvent = false; });
     audioA.addEventListener('loadstart', () => { audioA.hasFiredPlayingEvent = false; });
     audioA.addEventListener('pause', () => { audioA.hasFiredPlayingEvent = false; });
+    audioA.addEventListener('error', () => { void reportAudioSourceFailure(audioA, 'Deck A'); });
     audioA.addEventListener('loadedmetadata', () => {
       console.log(`[DIAG-AUDIO] Deck A loadedmetadata: duration=${audioA.duration}s (${Math.floor(audioA.duration/60)}:${Math.floor(audioA.duration%60)}), src=${audioA.src}`);
       const isCurrentTrackDeck = Boolean(currentTrack && activeAudio === audioA && audioA.dataset.trackId === String(currentTrack.id));
@@ -160,6 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
     audioB.addEventListener('waiting', () => { audioB.hasFiredPlayingEvent = false; });
     audioB.addEventListener('loadstart', () => { audioB.hasFiredPlayingEvent = false; });
     audioB.addEventListener('pause', () => { audioB.hasFiredPlayingEvent = false; });
+    audioB.addEventListener('error', () => { void reportAudioSourceFailure(audioB, 'Deck B'); });
     audioB.addEventListener('loadedmetadata', () => {
       console.log(`[DIAG-AUDIO] Deck B loadedmetadata: duration=${audioB.duration}s (${Math.floor(audioB.duration/60)}:${Math.floor(audioB.duration%60)}), src=${audioB.src}`);
       const isCurrentTrackDeck = Boolean(currentTrack && activeAudio === audioB && audioB.dataset.trackId === String(currentTrack.id));

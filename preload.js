@@ -6,6 +6,11 @@ contextBridge.exposeInMainWorld('echoApi', {
   getRelatedTracks: (data) => ipcRenderer.invoke('get-related-tracks', data),
   getLyrics: (data) => ipcRenderer.invoke('get-lyrics', data),
   downloadTrack: (data) => ipcRenderer.invoke('download-track', data),
+  onDependencyStatus: (cb) => {
+    const listener = (_event, data) => cb(data);
+    ipcRenderer.on('dependency-status', listener);
+    return () => ipcRenderer.removeListener('dependency-status', listener);
+  },
   openDownloadDir: () => ipcRenderer.invoke('open-download-dir'),
   clearCache: () => ipcRenderer.invoke('clear-cache'),
   onDownloadProgress: (cb) => {

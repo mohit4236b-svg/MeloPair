@@ -10,6 +10,16 @@ const QRCode = require('qrcode');
 const CryptoJS = require('crypto-js');
 const { randomBytes, timingSafeEqual, createECDH, createDecipheriv, hkdfSync } = require('crypto');
 
+// Electron does not make its userData path follow Chromium's --user-data-dir
+// consistently. Honor it explicitly so fresh-profile diagnostics and portable
+// launches use the requested writable directory before any paths are derived.
+const requestedUserDataDir = process.argv.find(argument => argument.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length)
+  || process.env.MELOPAIR_USER_DATA_DIR;
+if (requestedUserDataDir) {
+  try { app.setPath('userData', path.resolve(requestedUserDataDir)); }
+  catch (error) { console.error('[Profile] Could not apply requested user data folder:', error.message); }
+}
+
 const firebaseConfigPath = path.join(__dirname, 'firebase-hosting', 'firebase-config.json');
 let firebaseWebConfig = null;
 try {
@@ -947,7 +957,299 @@ function startAudioProxy() {
 }
 
 const YT_DLP_DLLS = ['vcruntime140.dll', 'msvcp140.dll'];
+const REQUIRED_RUNTIME_BINARIES = ['yt-dlp.exe', 'ffmpeg.exe', 'ffprobe.exe', 'cloudflared.exe'];
+const runtimeBinDir = path.join(app.getPath('userData'), 'bin');
+let runtimeDependenciesPromise = null;
+let runtimeDependencyStatus = null;
+const runtimeVersionChecks = new Map();
+const bundledVersionChecks = new Map();
+const runtimeUpgradeNeeded = new Set();
+let lastYtDlpRepairAt = 0;
+let ytDlpRepairPromise = null;
 const streamFailureReasons = new Map();
+let releaseProfileInitialization;
+const profileInitializationGate = new Promise(resolve => { releaseProfileInitialization = resolve; });
+
+function publishDependencyStatus(state, detail = '', percent = null) {
+  runtimeDependencyStatus = { state, detail, percent };
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+    mainWindow.webContents.send('dependency-status', runtimeDependencyStatus);
+  }
+}
+
+function spawnVersionCheck(binaryPath, args, timeoutMs = 9000) {
+  return new Promise(resolve => {
+    let output = '';
+    let settled = false;
+    let child;
+    const finish = ok => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => {
+      try { child?.kill(); } catch {}
+      finish(false);
+    }, timeoutMs);
+    try {
+      child = spawn(binaryPath, args, { windowsHide: true, cwd: path.dirname(binaryPath) });
+      child.stdout?.on('data', chunk => { output += chunk.toString(); });
+      child.stderr?.on('data', chunk => { output += chunk.toString(); });
+      child.once('error', () => finish(false));
+      child.once('close', code => finish(code === 0 && output.trim().length > 0));
+    } catch { finish(false); }
+  });
+}
+
+function readBinaryVersion(binaryPath, args, timeoutMs = 9000) {
+  return new Promise(resolve => {
+    let output = '';
+    let settled = false;
+    let child;
+    const finish = value => { if (settled) return; settled = true; clearTimeout(timer); resolve(value); };
+    const timer = setTimeout(() => { try { child?.kill(); } catch {} finish(null); }, timeoutMs);
+    try {
+      child = spawn(binaryPath, args, { windowsHide: true, cwd: path.dirname(binaryPath) });
+      child.stdout?.on('data', chunk => { output += chunk.toString(); });
+      child.stderr?.on('data', chunk => { output += chunk.toString(); });
+      child.once('error', () => finish(null));
+      child.once('close', code => finish(code === 0 && output.trim() ? output.trim() : null));
+    } catch { finish(null); }
+  });
+}
+
+function isVersionNewer(candidate, current) {
+  const tokens = value => String(value || '').match(/\d+(?:\.\d+){1,4}/)?.[0]?.split('.').map(Number) || [];
+  const left = tokens(candidate);
+  const right = tokens(current);
+  if (!left.length || !right.length) return false;
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const a = left[index] || 0;
+    const b = right[index] || 0;
+    if (a !== b) return a > b;
+  }
+  return false;
+}
+
+function downloadHttpsFile(url, targetPath, onProgress, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try { parsed = new URL(url); } catch { return reject(new Error('Invalid download URL.')); }
+    if (parsed.protocol !== 'https:') return reject(new Error('Runtime downloads require HTTPS.'));
+    if (redirects > 8) return reject(new Error('Too many download redirects.'));
+    const tempPath = `${targetPath}.tmp`;
+    let file;
+    const request = https.get(parsed, { headers: { 'User-Agent': 'MeloPair Runtime Repair' } }, response => {
+      if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+        response.resume();
+        const redirectUrl = new URL(response.headers.location, parsed).href;
+        if (!redirectUrl.startsWith('https://')) return reject(new Error('Download redirected away from HTTPS.'));
+        return downloadHttpsFile(redirectUrl, targetPath, onProgress, redirects + 1).then(resolve, reject);
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        return reject(new Error(`Download returned HTTP ${response.statusCode}.`));
+      }
+      const total = Number(response.headers['content-length']) || 0;
+      let received = 0;
+      try { file = fs.createWriteStream(tempPath); } catch (error) { return reject(error); }
+      response.on('data', chunk => {
+        received += chunk.length;
+        if (total > 0) onProgress?.(Math.min(99, Math.floor(received / total * 100)));
+      });
+      response.pipe(file);
+      file.once('error', error => { request.destroy(); try { fs.unlinkSync(tempPath); } catch {} reject(error); });
+      file.once('finish', () => file.close(async asyncError => {
+        if (asyncError) { try { fs.unlinkSync(tempPath); } catch {} return reject(asyncError); }
+        try {
+          if (!fs.existsSync(tempPath) || fs.statSync(tempPath).size <= 100000) throw new Error('Downloaded runtime file is empty or incomplete.');
+          try {
+            await fs.promises.rename(tempPath, targetPath);
+          } catch (error) {
+            if (!['EEXIST', 'EPERM', 'EACCES'].includes(error.code)) throw error;
+            try { await fs.promises.unlink(targetPath); } catch {}
+            await fs.promises.rename(tempPath, targetPath);
+          }
+          onProgress?.(100);
+          resolve(targetPath);
+        } catch (error) { try { fs.unlinkSync(tempPath); } catch {} reject(error); }
+      }));
+    });
+    request.setTimeout(90000, () => request.destroy(new Error('Runtime download timed out.')));
+    request.once('error', error => { try { file?.destroy(); } catch {} try { fs.unlinkSync(tempPath); } catch {} reject(error); });
+  });
+}
+
+async function copyBundledRuntimeBinary(name, force = false) {
+  const sourcePath = getBundledBinaryPath(name);
+  if (!sourcePath) return false;
+  try {
+    if (fs.statSync(sourcePath).size <= 100000) return false;
+    await fs.promises.mkdir(runtimeBinDir, { recursive: true });
+    const targetPath = path.join(runtimeBinDir, name);
+    const sourceStats = await fs.promises.stat(sourcePath);
+    let targetStats = null;
+    try { targetStats = await fs.promises.stat(targetPath); } catch {}
+    if (force || !targetStats || targetStats.size !== sourceStats.size) {
+      const tempPath = `${targetPath}.tmp`;
+      await fs.promises.copyFile(sourcePath, tempPath);
+      await fs.promises.rename(tempPath, targetPath).catch(async error => {
+        try { await fs.promises.unlink(targetPath); } catch {}
+        await fs.promises.rename(tempPath, targetPath);
+      });
+    }
+    return true;
+  } catch (error) {
+    console.warn(`[Runtime] Could not stage bundled ${name}:`, error.message);
+    return false;
+  }
+}
+
+async function isRuntimeBinaryValid(name) {
+  const targetPath = path.join(runtimeBinDir, name);
+  try {
+    const stat = await fs.promises.stat(targetPath);
+    if (stat.size <= 100000) return false;
+    const signature = `${stat.size}:${stat.mtimeMs}`;
+    const cached = runtimeVersionChecks.get(name);
+    if (cached?.signature === signature) return cached.valid;
+    const args = name === 'ffmpeg.exe' || name === 'ffprobe.exe' ? ['-version'] : ['--version'];
+    const output = await readBinaryVersion(targetPath, args);
+    const valid = Boolean(output);
+    const version = output?.match(/\d+(?:\.\d+){1,4}/)?.[0] || null;
+    runtimeVersionChecks.set(name, { signature, valid, version });
+    return valid;
+  } catch { return false; }
+}
+
+async function ensureRuntimeDependencies() {
+  if (runtimeDependenciesPromise) return runtimeDependenciesPromise;
+  runtimeDependenciesPromise = (async () => {
+    await fs.promises.mkdir(runtimeBinDir, { recursive: true });
+    runtimeUpgradeNeeded.clear();
+    let needsRepair = false;
+    for (const name of REQUIRED_RUNTIME_BINARIES) {
+      const valid = await isRuntimeBinaryValid(name);
+      const bundledPath = getBundledBinaryPath(name);
+      if (!valid) { needsRepair = true; continue; }
+      if (bundledPath) {
+        const targetVersion = runtimeVersionChecks.get(name)?.version;
+        let bundledVersion = bundledVersionChecks.get(name)?.version;
+        if (!bundledVersion) {
+          const args = name === 'ffmpeg.exe' || name === 'ffprobe.exe' ? ['-version'] : ['--version'];
+          const output = await readBinaryVersion(bundledPath, args);
+          bundledVersion = output?.match(/\d+(?:\.\d+){1,4}/)?.[0] || null;
+          bundledVersionChecks.set(name, { version: bundledVersion });
+        }
+        if (isVersionNewer(bundledVersion, targetVersion)) {
+          runtimeUpgradeNeeded.add(name);
+          needsRepair = true;
+        }
+      }
+    }
+    if (needsRepair) publishDependencyStatus('checking', 'Preparing audio and Rooms tools…');
+
+    for (const dll of YT_DLP_DLLS) {
+      const targetPath = path.join(runtimeBinDir, dll);
+      const bundledPath = getBundledBinaryPath(dll);
+      let valid = false;
+      try {
+        const targetStat = await fs.promises.stat(targetPath);
+        const bundledStat = bundledPath ? await fs.promises.stat(bundledPath) : null;
+        valid = targetStat.size > 50000 && (!bundledStat || targetStat.size === bundledStat.size);
+      } catch {}
+      if (!valid) await copyBundledRuntimeBinary(dll);
+    }
+
+    for (const name of REQUIRED_RUNTIME_BINARIES) {
+      const targetPath = path.join(runtimeBinDir, name);
+      if (await isRuntimeBinaryValid(name) && !runtimeUpgradeNeeded.has(name)) continue;
+
+      const copied = await copyBundledRuntimeBinary(name, runtimeUpgradeNeeded.has(name));
+      if (copied && await isRuntimeBinaryValid(name)) continue;
+
+      if (name === 'yt-dlp.exe' || name === 'cloudflared.exe') {
+        const source = name === 'yt-dlp.exe'
+          ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
+          : 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe';
+        publishDependencyStatus('downloading', `Repairing ${name === 'yt-dlp.exe' ? 'audio streaming' : 'Rooms connection'}…`, null);
+        await downloadHttpsFile(source, targetPath, percent => publishDependencyStatus('downloading', `Repairing ${name === 'yt-dlp.exe' ? 'audio streaming' : 'Rooms connection'}…`, percent));
+        runtimeVersionChecks.delete(name);
+        if (!await isRuntimeBinaryValid(name)) throw new Error(`The downloaded ${name} failed its launch check.`);
+        continue;
+      }
+
+      publishDependencyStatus('downloading', 'Repairing audio tools…', null);
+      const archivePath = path.join(runtimeBinDir, 'ffmpeg-repair.zip');
+      const extractDir = path.join(runtimeBinDir, 'ffmpeg-repair');
+      await downloadHttpsFile('https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip', archivePath, percent => publishDependencyStatus('downloading', 'Repairing audio tools…', percent));
+      await fs.promises.rm(extractDir, { recursive: true, force: true });
+      await fs.promises.mkdir(extractDir, { recursive: true });
+      const tarPath = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'tar.exe');
+      await new Promise((resolve, reject) => {
+        const child = spawn(tarPath, ['-xf', archivePath, '-C', extractDir], { windowsHide: true, env: { ...process.env, PATH: `${process.env.WINDIR || 'C:\\Windows'}\\System32;${process.env.WINDIR || 'C:\\Windows'}` } });
+        child.once('error', reject);
+        child.once('close', code => code === 0 ? resolve() : reject(new Error(`Windows archive extraction failed (${code}).`)));
+      });
+      for (const executable of ['ffmpeg.exe', 'ffprobe.exe']) {
+        const candidate = findFileRecursively(extractDir, executable);
+        if (!candidate) throw new Error(`The audio archive did not contain ${executable}.`);
+        const staged = path.join(runtimeBinDir, executable);
+        await fs.promises.copyFile(candidate, `${staged}.tmp`);
+        await fs.promises.rename(`${staged}.tmp`, staged).catch(async error => { try { await fs.promises.unlink(staged); } catch {} await fs.promises.rename(`${staged}.tmp`, staged); });
+        runtimeVersionChecks.delete(executable);
+        if (!await isRuntimeBinaryValid(executable)) throw new Error(`${executable} failed its launch check after repair.`);
+      }
+      await fs.promises.rm(archivePath, { force: true });
+      await fs.promises.rm(extractDir, { recursive: true, force: true });
+    }
+    publishDependencyStatus('ready', 'Audio and Rooms tools are ready.', 100);
+    return true;
+  })().catch(error => {
+    publishDependencyStatus('error', error.message || 'Could not prepare required runtime tools.');
+    appendStreamDebug(`Runtime dependency repair failed: ${error.stack || error}`);
+    throw error;
+  }).finally(() => { runtimeDependenciesPromise = null; });
+  return runtimeDependenciesPromise;
+}
+
+function findFileRecursively(root, fileName) {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const candidate = path.join(root, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase() === fileName.toLowerCase()) return candidate;
+    if (entry.isDirectory()) {
+      const nested = findFileRecursively(candidate, fileName);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+async function refreshYtDlpAfterExtractionFailure(reason) {
+  if (Date.now() - lastYtDlpRepairAt < 6 * 60 * 60 * 1000) return false;
+  if (ytDlpRepairPromise) return ytDlpRepairPromise;
+  lastYtDlpRepairAt = Date.now();
+  ytDlpRepairPromise = (async () => {
+    const targetPath = path.join(runtimeBinDir, 'yt-dlp.exe');
+    publishDependencyStatus('downloading', 'Refreshing audio streaming support…', null);
+    try {
+      await downloadHttpsFile('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe', targetPath, percent => publishDependencyStatus('downloading', 'Refreshing audio streaming support…', percent));
+      runtimeVersionChecks.delete('yt-dlp.exe');
+      if (!await spawnVersionCheck(targetPath, ['--version'])) throw new Error('Updated yt-dlp failed its launch check.');
+      appendStreamDebug(`yt-dlp refreshed after stream extraction failure: ${String(reason || '').slice(0, 240)}`);
+      publishDependencyStatus('ready', 'Audio and Rooms tools are ready.', 100);
+      return true;
+    } catch (error) {
+      appendStreamDebug(`yt-dlp refresh failed: ${error.message}`);
+      publishDependencyStatus('error', `Audio streaming repair failed: ${error.message}`);
+      return false;
+    } finally {
+      ytDlpRepairPromise = null;
+    }
+  })();
+  return ytDlpRepairPromise;
+}
 
 function getBundledBinaryPath(name) {
   if (app.isPackaged) {
@@ -959,67 +1261,25 @@ function getBundledBinaryPath(name) {
     path.join(__dirname, 'build_support', 'vc-runtime', name),
     path.join(__dirname, 'resources', 'bin', name)
   ];
-  return devCandidates.find(candidate => fs.existsSync(candidate)) || null;
-}
-
-function ensureUserBinaries() {
-  try {
-    const userBinDir = path.join(app.getPath('userData'), 'bin');
-    fs.mkdirSync(userBinDir, { recursive: true });
-    for (const name of ['yt-dlp.exe', ...YT_DLP_DLLS]) {
-      const bundledPath = getBundledBinaryPath(name);
-      if (!bundledPath) {
-        if (name === 'yt-dlp.exe') console.error('[yt-dlp] Bundled executable is missing from resources/bin.');
-        continue;
-      }
-      const targetPath = path.join(userBinDir, name);
-      const sourceSize = fs.statSync(bundledPath).size;
-      const targetSize = fs.existsSync(targetPath) ? fs.statSync(targetPath).size : 0;
-      if (!targetSize || targetSize < sourceSize) {
-        fs.copyFileSync(bundledPath, targetPath);
-        console.log(`[Media Tools] Installed bundled ${name} into userData/bin.`);
-      }
-    }
-    const ytDlpPath = path.join(userBinDir, 'yt-dlp.exe');
-    return fs.existsSync(ytDlpPath) && fs.statSync(ytDlpPath).size > 50000 ? ytDlpPath : null;
-  } catch (err) {
-    console.error('[Media Tools] Could not prepare writable userData/bin:', err.message);
-    return null;
+  if (name === 'ffmpeg.exe') {
+    try { devCandidates.push(require('ffmpeg-static')); } catch {}
   }
+  if (name === 'ffprobe.exe') {
+    try { devCandidates.push(require('ffprobe-static')?.path); } catch {}
+  }
+  return devCandidates.find(candidate => typeof candidate === 'string' && fs.existsSync(candidate)) || null;
 }
 
 function getYtDlpPath() {
-  // The executable and its VC++ runtime DLLs share a writable folder. This
-  // avoids app.asar / Program Files execution and DLL search-path failures.
-  return ensureUserBinaries();
+  return path.join(runtimeBinDir, 'yt-dlp.exe');
 }
 
 function getFfmpegPath() {
-  if (app.isPackaged) {
-    const bundledPath = path.join(process.resourcesPath, 'bin', 'ffmpeg.exe');
-    return fs.existsSync(bundledPath) ? bundledPath : null;
-  }
-  try {
-    const devPath = require('ffmpeg-static');
-    return devPath && fs.existsSync(devPath) ? devPath : null;
-  } catch (err) {
-    console.warn('[Offline Download] Unable to locate development FFmpeg:', err.message);
-    return null;
-  }
+  return path.join(runtimeBinDir, 'ffmpeg.exe');
 }
 
 function getFfprobePath() {
-  if (app.isPackaged) {
-    const bundledPath = path.join(process.resourcesPath, 'bin', 'ffprobe.exe');
-    return fs.existsSync(bundledPath) ? bundledPath : null;
-  }
-  try {
-    const devPath = require('ffprobe-static')?.path;
-    return devPath && fs.existsSync(devPath) ? devPath : null;
-  } catch (err) {
-    console.warn('[Offline Download] Unable to locate development ffprobe:', err.message);
-    return null;
-  }
+  return path.join(runtimeBinDir, 'ffprobe.exe');
 }
 
 const musicVideoTitlePattern = /\b(?:official\s+music\s+video|official\s+video|music\s+video|video\s+song|full\s+video|lyrical\s+video|teaser|trailer|jukebox|1\s*hour|mashup)\b/i;
@@ -1032,10 +1292,10 @@ function appendStreamDebug(message) {
   }
 }
 
-function runYtDlpOnce(args, timeoutMs = 15000) {
+function runYtDlpOnce(args, timeoutMs = 30000) {
   return new Promise((resolve) => {
+    void ensureRuntimeDependencies().then(() => {
     const ytDlpCmd = getYtDlpPath();
-    if (!ytDlpCmd) return resolve({ code: -1, stdout: '', stderr: 'Bundled yt-dlp.exe or its VC++ runtime is missing.' });
     let stdout = '';
     let stderr = '';
     let finished = false;
@@ -1055,10 +1315,11 @@ function runYtDlpOnce(args, timeoutMs = 15000) {
     child.stderr?.on('data', data => { stderr += data.toString(); });
     child.on('error', error => finish({ code: -1, stdout, stderr: `${stderr}\n${error.message}`, timedOut }));
     child.on('close', code => finish({ code: timedOut ? -1 : code, stdout, stderr: timedOut ? `${stderr}\nProcess timed out after ${timeoutMs}ms.` : stderr, timedOut }));
+    }).catch(error => resolve({ code: -1, stdout: '', stderr: error.message || 'Runtime dependency repair failed.' }));
   });
 }
 
-async function runYtDlp(args, timeoutMs = 15000) {
+async function runYtDlp(args, timeoutMs = 30000) {
   const first = await runYtDlpOnce(args, timeoutMs);
   if (first.code === 0) return first;
   appendStreamDebug(`yt-dlp attempt 1 failed (exit=${first.code}, timeout=${Boolean(first.timedOut)}).\nargs=${args.join(' ')}\nstderr=${first.stderr || '(empty)'}`);
@@ -1210,6 +1471,15 @@ async function findOfficialAudioVideo(metadata = {}) {
 async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
   if (!videoId) return null;
 
+  try {
+    await ensureRuntimeDependencies();
+  } catch (error) {
+    const reason = `Required audio tools are unavailable: ${error.message || 'runtime repair failed'}`;
+    streamFailureReasons.set(videoId, reason);
+    appendStreamDebug(`resolveStreamUrl dependency check failed for videoId=${videoId}: ${reason}`);
+    return null;
+  }
+
   if (!options.forceRefresh && streamCache.has(videoId)) {
     const cached = streamCache.get(videoId);
     if (Date.now() - cached.timestamp < 1000 * 60 * 60 * 5) {
@@ -1238,9 +1508,10 @@ async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
   const metadataDuration = Number(metadata.duration) || 0;
   let selectedVideoId = videoId;
   if (metadataDuration > 0 && !String(videoId).startsWith('saavn_')) {
-    const check = await runYtDlp(['--dump-single-json', '--skip-download', '--no-warnings', '--no-playlist', `https://www.youtube.com/watch?v=${videoId}`]);
+    const check = await runYtDlp(['--dump-single-json', '--skip-download', '--no-warnings', '--no-playlist', `https://www.youtube.com/watch?v=${videoId}`], 20000);
     try {
-      const details = JSON.parse(check.stdout.trim().split(/\r?\n/).pop());
+      const details = parseYtDlpJson(check.stdout);
+      if (!details || typeof details !== 'object') throw new Error('yt-dlp returned no metadata object.');
       const oversized = Number(details.duration) > metadataDuration + 8;
       const isVideoTitle = musicVideoTitlePattern.test(details.title || '');
       if (oversized || isVideoTitle) {
@@ -1262,7 +1533,7 @@ async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
     '--extractor-args', 'youtube:player_client=android,ios,web',
     '-j', sourceUrl
   ];
-  const result = await runYtDlp(args, 15000);
+  const result = await runYtDlp(args, 30000);
   const info = result.code === 0 ? parseYtDlpJson(result.stdout) : null;
   const selectedFormat = info?.requested_formats?.find(format => format?.url) || info?.requested_downloads?.find(format => format?.url) || info;
   const resolvedUrl = selectedFormat?.url || info?.url;
@@ -1281,6 +1552,19 @@ async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
 
   const ytDlpReason = result.stderr?.trim() || `yt-dlp exited with code ${result.code}.`;
   console.warn(`[Stream Proxy] yt-dlp audio extraction failed for ${videoId}:`, ytDlpReason.slice(0, 400));
+  const refreshedYtDlp = await refreshYtDlpAfterExtractionFailure(ytDlpReason);
+  if (refreshedYtDlp) {
+    const repairedResult = await runYtDlp(args, 30000);
+    const repairedInfo = repairedResult.code === 0 ? parseYtDlpJson(repairedResult.stdout) : null;
+    const repairedFormat = repairedInfo?.requested_formats?.find(format => format?.url) || repairedInfo?.requested_downloads?.find(format => format?.url) || repairedInfo;
+    const repairedUrl = repairedFormat?.url || repairedInfo?.url;
+    if (repairedUrl) {
+      const streamInfo = normalizeStreamResult({ url: repairedUrl, headers: { ...(repairedInfo?.http_headers || {}), ...(repairedFormat?.http_headers || {}) }, source: 'yt-dlp-repaired', timestamp: Date.now() });
+      streamCache.set(videoId, streamInfo);
+      streamFailureReasons.delete(videoId);
+      return streamInfo;
+    }
+  }
   const innerTubeInfo = await resolveInnerTubeAudio(selectedVideoId);
   if (innerTubeInfo) {
     const streamInfo = { ...innerTubeInfo, timestamp: Date.now() };
@@ -1520,6 +1804,11 @@ function createWindow() {
   } else {
     mainWindow.loadFile('index.html');
   }
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (runtimeDependencyStatus && runtimeDependencyStatus.state !== 'ready') {
+      mainWindow?.webContents.send('dependency-status', runtimeDependencyStatus);
+    }
+  });
 
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window-state', 'maximized'));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window-state', 'unmaximized'));
@@ -1536,7 +1825,7 @@ app.whenReady().then(() => {
   } catch (e) {
     console.warn('[Firebase Auth] Could not register the EchoPlayer sign-in return link:', e.message);
   }
-  ensureUserBinaries();
+  void ensureRuntimeDependencies().catch(error => console.warn('[Runtime] Dependency preparation will retry before use:', error.message));
   startAudioProxy();
   createWindow();
   const startupAuthUrl = process.argv.find(arg => /^echoplayer:\/\/auth(?:[/?#]|$)/i.test(arg));
@@ -1806,6 +2095,7 @@ async function extractYouTubeTimedLyrics(videoId) {
   if (!videoId || typeof videoId !== 'string' || videoId.startsWith('saavn_') || videoId.startsWith('Dracula-')) {
     return null;
   }
+  try { await ensureRuntimeDependencies(); } catch (error) { appendStreamDebug(`Timed lyrics skipped because runtime tools are unavailable: ${error.message}`); return null; }
   const ytDlpCmd = getYtDlpPath();
   if (!ytDlpCmd) return null;
 
@@ -2184,6 +2474,8 @@ ipcMain.handle('clear-cache', () => {
 
 // Download track offline to Music/EchoMusic
 ipcMain.handle('download-track', async (event, { id, title, artist }) => {
+  try { await ensureRuntimeDependencies(); }
+  catch (error) { return { success: false, error: `Audio tools could not be repaired: ${error.message}` }; }
   const safeId = String(id || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
   const musicDir = path.join(app.getPath('music'), 'EchoMusic');
   if (!safeId) {
@@ -2259,6 +2551,7 @@ async function writeProfileInitializationState(state) {
 }
 
 ipcMain.handle('initialize-fresh-profile', async (event, profileSignals = {}) => {
+  try {
   let initializationState = null;
   try {
     initializationState = JSON.parse(await fs.promises.readFile(profileInitializationPath, 'utf8'));
@@ -2274,17 +2567,31 @@ ipcMain.handle('initialize-fresh-profile', async (event, profileSignals = {}) =>
   }
 
   const existingAccountSession = fs.existsSync(firebaseSessionFile());
-  const hasPriorProfile = Boolean(initializationState?.hasInitializedFreshProfile
-    || savedProfile
-    || profileSignals?.hasExistingProfile
-    || existingAccountSession);
+  const savedProfileHasRealUse = Boolean(savedProfile && (
+    (Array.isArray(savedProfile.history) && savedProfile.history.length)
+    || (Array.isArray(savedProfile.favorites) && savedProfile.favorites.length)
+    || (Array.isArray(savedProfile.favoriteTracks) && savedProfile.favoriteTracks.length)
+    || (Array.isArray(savedProfile.importedListeningMemory) && savedProfile.importedListeningMemory.length)
+    || (savedProfile.tastePreferences && Object.keys(savedProfile.tastePreferences).length)
+    || (String(savedProfile.profileName || '').trim() && savedProfile.profileName !== 'Local listener')
+  ));
+  const signalHasRealUse = profileSignals?.hasExistingProfile === true;
+  // Older builds could save a default Starboy selection and mark onboarding
+  // complete before first-run initialization. That empty state is not a user.
+  const staleFreshProfile = initializationState?.freshInstall === true
+    && initializationState?.onboardingResolvedByUser !== true
+    && !savedProfileHasRealUse && !signalHasRealUse && !existingAccountSession;
+  const hasPriorProfile = Boolean((initializationState?.hasInitializedFreshProfile && !staleFreshProfile)
+    || savedProfileHasRealUse || signalHasRealUse || existingAccountSession);
   const isFirstLaunch = !initializationState?.hasInitializedFreshProfile && !hasPriorProfile;
+  const shouldRunWelcome = isFirstLaunch || staleFreshProfile;
 
-  if (isFirstLaunch) {
+  if (shouldRunWelcome) {
     // A genuinely new local profile must never inherit an account session from
     // copied app data or a stale Electron origin store.
     await clearFirebaseSession().catch(() => {});
     await clearPendingFirebaseLogin().catch(() => {});
+    try { await fs.promises.unlink(storageFilePath); } catch (error) { if (error.code !== 'ENOENT') console.warn('[Profile] Could not clear stale default profile:', error.message); }
     try {
       await event.sender.session.clearStorageData({
         storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers']
@@ -2294,23 +2601,26 @@ ipcMain.handle('initialize-fresh-profile', async (event, profileSignals = {}) =>
     }
   }
 
-  const isFreshInstall = initializationState?.freshInstall ?? isFirstLaunch;
-  const onboardingComplete = profileSignals?.onboardingComplete === true
+  const isFreshInstall = shouldRunWelcome ? true : (initializationState?.freshInstall ?? isFirstLaunch);
+  const onboardingComplete = !shouldRunWelcome && (profileSignals?.onboardingComplete === true
     || savedProfile?.onboardingDone === true
-    || initializationState?.onboardingComplete === true;
+    || initializationState?.onboardingComplete === true);
   const nextState = {
     ...(initializationState || {}),
     hasInitializedFreshProfile: true,
     freshInstall: isFreshInstall,
     onboardingComplete,
-    welcomeWizardPending: initializationState?.welcomeWizardPending === true
+    welcomeWizardPending: shouldRunWelcome || initializationState?.welcomeWizardPending === true
   };
   await writeProfileInitializationState(nextState);
 
   return {
     isFirstLaunch,
-    showWelcomeWizard: isFirstLaunch || nextState.welcomeWizardPending || (isFreshInstall && !onboardingComplete)
+    showWelcomeWizard: shouldRunWelcome || nextState.welcomeWizardPending || (isFreshInstall && !onboardingComplete)
   };
+  } finally {
+    releaseProfileInitialization?.();
+  }
 });
 
 ipcMain.handle('mark-onboarding-complete', async (_event, completed) => {
@@ -2321,12 +2631,14 @@ ipcMain.handle('mark-onboarding-complete', async (_event, completed) => {
     hasInitializedFreshProfile: true,
     freshInstall: Boolean(state.freshInstall),
     onboardingComplete: Boolean(completed),
+    onboardingResolvedByUser: Boolean(completed),
     welcomeWizardPending: !completed
   });
   return true;
 });
 
 ipcMain.handle('load-user-data', async () => {
+  await profileInitializationGate;
   try {
     if (fs.existsSync(storageFilePath)) {
       const raw = fs.readFileSync(storageFilePath, 'utf8');
@@ -2344,6 +2656,7 @@ let saveUserDataQueue = Promise.resolve();
 ipcMain.handle('save-user-data', async (event, data) => {
   saveUserDataQueue = saveUserDataQueue.then(async () => {
     try {
+      await profileInitializationGate;
       if (!fs.existsSync(userDataPath)) {
         await fs.promises.mkdir(userDataPath, { recursive: true });
       }
@@ -2399,42 +2712,12 @@ function watchLocalTunnel(tunnel) {
 }
 
 function getCloudflaredPath() {
-  const userDataDir = app.getPath('userData');
-  const extractedExe = path.join(userDataDir, 'cloudflared.exe');
-
-  // 1. If already valid on disk in userData, use it
-  if (fs.existsSync(extractedExe)) {
-    try {
-      if (fs.statSync(extractedExe).size > 10000000) {
-        return extractedExe;
-      }
-    } catch (e) {}
-  }
-
-  // Always prepare the mutable tunnel binary under userData before spawning.
-  const candidates = [
-    path.join(process.resourcesPath || '', 'bin', 'cloudflared.exe'),
-    path.join(__dirname, 'cloudflared.exe'),
-    path.join(process.resourcesPath || '', 'cloudflared.exe'),
-    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'cloudflared.exe')
-  ];
-
-  for (const c of candidates) {
-    if (fs.existsSync(c)) {
-      try {
-        fs.copyFileSync(c, extractedExe);
-        console.log('[Tunnel] Successfully extracted cloudflared to real disk:', extractedExe);
-        return extractedExe;
-      } catch (err) {
-        console.warn('[Tunnel] Copy error for candidate:', c, err);
-      }
-    }
-  }
-
-  return null;
+  return path.join(runtimeBinDir, 'cloudflared.exe');
 }
 
 async function startGlobalTunnel() {
+  try { await ensureRuntimeDependencies(); }
+  catch (error) { console.error('[Tunnel] Required runtime tools are unavailable:', error.message); return null; }
   if (globalTunnelUrl) return globalTunnelUrl;
   if (tunnelStarting) {
     while (tunnelStarting) {

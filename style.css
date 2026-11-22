@@ -10704,3 +10704,25 @@ body:has(#nowPlayingModal:not(.hidden)) .track-art-backdrop {
 .mp-tour-actions .mp-skip-link { order:3; }
 .mp-tour-actions .pill-btn:disabled { opacity:.38; cursor:default; }
 @media (max-width:760px) { .mp-profile-actions { justify-content:flex-start; } .mp-onboarding-top { margin-left:62px; } }
+/* Runtime repair status is shown only while bundled tools are being repaired. */
+.dependency-status-pill {
+  position: fixed;
+  z-index: 10000;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(88vw, 480px);
+  padding: 9px 16px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 999px;
+  color: rgba(255,255,255,.94);
+  background: rgba(27,25,35,.82);
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  font: 600 13px/1.35 "Plus Jakarta Sans", sans-serif;
+  text-align: center;
+  pointer-events: none;
+}
+.dependency-status-pill[data-state="error"] { border-color: rgba(255,100,120,.42); color: #ffd6dc; }
+.dependency-status-pill.hidden { display: none; }

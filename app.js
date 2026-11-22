@@ -111,8 +111,31 @@ const isElectron = !isAndroid && Boolean(typeof window !== 'undefined' && window
 
 // Global monotonic request token to enforce "latest request wins" across async operations
 let playRequestId = 0;
+let profileInitializationPromise = Promise.resolve({ showWelcomeWizard: false });
 
 document.addEventListener('DOMContentLoaded', () => {
+  const feedJunkTitlePatterns = [
+    /\btop\s*100\b/i, /\btop\s+hits\b/i, /\bplaylist\b/i, /\bmixtape\b/i,
+    /\bfull\s+album\b/i, /\bnon[\s-]?stop\b/i, /\bjukebox\b/i,
+    /\bmashup\s+mix\b/i, /\bcompilation\b/i, /\bbest\s+of\s+20\b/i,
+    /\bhits\s+20\b/i, /\b1\s*(?:hour|hr)\b/i, /\bhour\s+loop\b/i,
+    /\bslowed\s*\+\s*reverb\b/i
+  ];
+  const musicVideoTitlePattern = /\b(?:official\s+music\s+video|official\s+video|music\s+video|video\s+song|full\s+video|lyrical\s+video|teaser|trailer|jukebox|1\s*hour|mashup)\b/i;
+  const dependencyStatusPill = document.getElementById('dependencyStatusPill');
+  const renderDependencyStatus = status => {
+    if (!dependencyStatusPill || !status) return;
+    if (status.state === 'ready') {
+      dependencyStatusPill.classList.add('hidden');
+      return;
+    }
+    dependencyStatusPill.dataset.state = status.state || 'checking';
+    const progress = Number.isFinite(Number(status.percent)) ? ` ${Math.max(0, Math.min(100, Number(status.percent)))}%` : '';
+    dependencyStatusPill.textContent = `${status.detail || 'Preparing audio engine…'}${status.state === 'downloading' ? progress : ''}`;
+    dependencyStatusPill.classList.remove('hidden');
+  };
+  window.echoApi?.onDependencyStatus?.(renderDependencyStatus);
+
   // Dual Audio Elements for Gapless DJ Crossfade
   const audioA = document.getElementById('audioA');
   const audioB = document.getElementById('audioB');
@@ -3942,15 +3965,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const onboardingCompleteOnThisDevice = safeStorageGet('melopair_onboarding_done') === 'true'
       || safeStorageGet('melopair_taste_setup_v1') === 'true';
-    const hasExistingLocalProfile = [
-      safeStorageGet('echo_user_data_backup'),
-      safeStorageGet('echo_listening_history'),
-      safeStorageGet('echo_last_played_track'),
-      safeStorageGet('echo_profile_name'),
-      safeStorageGet('melopair_taste_preferences'),
-      safeStorageGet('melopair_imported_listening_memory')
-    ].some(value => value !== null && value !== '[]' && value !== '{}');
-    const firstRunInitialization = window.echoApi?.initializeFreshProfile
+    const parseLocalJson = (key, fallback) => { try { return JSON.parse(safeStorageGet(key) || JSON.stringify(fallback)); } catch { return fallback; } };
+    const backupProfile = parseLocalJson('echo_user_data_backup', null);
+    const savedTaste = parseLocalJson('melopair_taste_preferences', {});
+    const savedImported = parseLocalJson('melopair_imported_listening_memory', []);
+    const savedLocalHistory = parseLocalJson('echo_listening_history', []);
+    const hasExistingLocalProfile = Boolean(
+      (Array.isArray(savedLocalHistory) && savedLocalHistory.length)
+      || (Array.isArray(savedImported) && savedImported.length)
+      || (savedTaste && Object.keys(savedTaste).length)
+      || (backupProfile && ((Array.isArray(backupProfile.history) && backupProfile.history.length)
+        || (Array.isArray(backupProfile.favorites) && backupProfile.favorites.length)
+        || (Array.isArray(backupProfile.favoriteTracks) && backupProfile.favoriteTracks.length)
+        || (Array.isArray(backupProfile.importedListeningMemory) && backupProfile.importedListeningMemory.length)
+        || (backupProfile.tastePreferences && Object.keys(backupProfile.tastePreferences).length)))
+      || (String(safeStorageGet('echo_profile_name') || '').trim() && safeStorageGet('echo_profile_name') !== 'Local listener')
+    );
+    profileInitializationPromise = window.echoApi?.initializeFreshProfile
       ? window.echoApi.initializeFreshProfile({ hasExistingProfile: hasExistingLocalProfile, onboardingComplete: onboardingCompleteOnThisDevice })
         .catch(error => { console.warn('[Profile] Could not initialize first-run state:', error); return { showWelcomeWizard: false }; })
       : Promise.resolve({ showWelcomeWizard: false });
@@ -4028,7 +4059,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (window.echoApi?.getFirebaseUser) {
-      firstRunInitialization
+      profileInitializationPromise
         .then(profileState => {
           if (profileState?.showWelcomeWizard) {
             forceWelcomeOnboarding = true;
@@ -4058,7 +4089,7 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(error => console.warn('[Firebase Auth] Could not load sign-in state:', error));
     } else {
-      firstRunInitialization.then(profileState => {
+      profileInitializationPromise.then(profileState => {
         clearTimeout(onboardingAccountCheckTimeout);
         if (profileState?.showWelcomeWizard) {
           forceWelcomeOnboarding = true;
@@ -5776,15 +5807,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function normalizeTasteLabel(value) {
     return String(value || '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   }
-
-  const feedJunkTitlePatterns = [
-    /\btop\s*100\b/i, /\btop\s+hits\b/i, /\bplaylist\b/i, /\bmixtape\b/i,
-    /\bfull\s+album\b/i, /\bnon[\s-]?stop\b/i, /\bjukebox\b/i,
-    /\bmashup\s+mix\b/i, /\bcompilation\b/i, /\bbest\s+of\s+20\b/i,
-    /\bhits\s+20\b/i, /\b1\s*(?:hour|hr)\b/i, /\bhour\s+loop\b/i,
-    /\bslowed\s*\+\s*reverb\b/i
-  ];
-  const musicVideoTitlePattern = /\b(?:official\s+music\s+video|official\s+video|music\s+video|video\s+song|full\s+video|lyrical\s+video|teaser|trailer|jukebox|1\s*hour|mashup)\b/i;
 
   function getTrackDurationSeconds(track) {
     const raw = track?.durationSec ?? track?.duration ?? track?.lengthSeconds ?? track?.length ?? 0;
@@ -7517,6 +7539,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadPersistentState() {
     try {
+      await profileInitializationPromise;
       let data = null;
       if (window.echoApi && window.echoApi.loadUserData) {
         data = await window.echoApi.loadUserData();

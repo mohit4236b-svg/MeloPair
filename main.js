@@ -2041,6 +2041,82 @@ ipcMain.handle('open-download-dir', () => {
 // ------------------------------------------------------------------------
 const userDataPath = app.getPath('userData');
 const storageFilePath = path.join(userDataPath, 'echo_user_data.json');
+const profileInitializationPath = path.join(userDataPath, 'hasInitializedFreshProfile.json');
+
+async function writeProfileInitializationState(state) {
+  await fs.promises.mkdir(userDataPath, { recursive: true });
+  const tempPath = `${profileInitializationPath}.tmp`;
+  await fs.promises.writeFile(tempPath, JSON.stringify(state, null, 2), 'utf8');
+  await fs.promises.rename(tempPath, profileInitializationPath);
+}
+
+ipcMain.handle('initialize-fresh-profile', async (event, profileSignals = {}) => {
+  let initializationState = null;
+  try {
+    initializationState = JSON.parse(await fs.promises.readFile(profileInitializationPath, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn('[Profile] Could not read first-run marker:', error.message);
+  }
+
+  let savedProfile = null;
+  try {
+    savedProfile = JSON.parse(await fs.promises.readFile(storageFilePath, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn('[Profile] Could not inspect saved profile:', error.message);
+  }
+
+  const existingAccountSession = fs.existsSync(firebaseSessionFile());
+  const hasPriorProfile = Boolean(initializationState?.hasInitializedFreshProfile
+    || savedProfile
+    || profileSignals?.hasExistingProfile
+    || existingAccountSession);
+  const isFirstLaunch = !initializationState?.hasInitializedFreshProfile && !hasPriorProfile;
+
+  if (isFirstLaunch) {
+    // A genuinely new local profile must never inherit an account session from
+    // copied app data or a stale Electron origin store.
+    await clearFirebaseSession().catch(() => {});
+    await clearPendingFirebaseLogin().catch(() => {});
+    try {
+      await event.sender.session.clearStorageData({
+        storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers']
+      });
+    } catch (error) {
+      console.warn('[Profile] Could not clear fresh-profile browser storage:', error.message);
+    }
+  }
+
+  const isFreshInstall = initializationState?.freshInstall ?? isFirstLaunch;
+  const onboardingComplete = profileSignals?.onboardingComplete === true
+    || savedProfile?.onboardingDone === true
+    || initializationState?.onboardingComplete === true;
+  const nextState = {
+    ...(initializationState || {}),
+    hasInitializedFreshProfile: true,
+    freshInstall: isFreshInstall,
+    onboardingComplete,
+    welcomeWizardPending: initializationState?.welcomeWizardPending === true
+  };
+  await writeProfileInitializationState(nextState);
+
+  return {
+    isFirstLaunch,
+    showWelcomeWizard: isFirstLaunch || nextState.welcomeWizardPending || (isFreshInstall && !onboardingComplete)
+  };
+});
+
+ipcMain.handle('mark-onboarding-complete', async (_event, completed) => {
+  let state = {};
+  try { state = JSON.parse(await fs.promises.readFile(profileInitializationPath, 'utf8')); } catch {}
+  await writeProfileInitializationState({
+    ...state,
+    hasInitializedFreshProfile: true,
+    freshInstall: Boolean(state.freshInstall),
+    onboardingComplete: Boolean(completed),
+    welcomeWizardPending: !completed
+  });
+  return true;
+});
 
 ipcMain.handle('load-user-data', async () => {
   try {
@@ -2066,6 +2142,17 @@ ipcMain.handle('save-user-data', async (event, data) => {
       const tmpPath = storageFilePath + '.tmp';
       await fs.promises.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8');
       await fs.promises.rename(tmpPath, storageFilePath);
+      if (typeof data?.onboardingDone === 'boolean') {
+        let profileState = {};
+        try { profileState = JSON.parse(await fs.promises.readFile(profileInitializationPath, 'utf8')); } catch {}
+        await writeProfileInitializationState({
+          ...profileState,
+          hasInitializedFreshProfile: true,
+          freshInstall: Boolean(profileState.freshInstall),
+          onboardingComplete: data.onboardingDone,
+          welcomeWizardPending: !data.onboardingDone
+        });
+      }
       return true;
     } catch (err) {
       console.error('[Storage] Error saving user data asynchronously:', err);

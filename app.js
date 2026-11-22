@@ -3877,7 +3877,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let onboardingStage = 'taste';
     let onboardingReplay = false;
     let onboardingLaunchTour = true;
-    const tasteSetupComplete = () => safeStorageGet('melopair_onboarding_done') === 'true' || safeStorageGet('melopair_taste_setup_v1') === 'true';
+    let forceWelcomeOnboarding = false;
+    const tasteSetupComplete = () => !forceWelcomeOnboarding
+      && (safeStorageGet('melopair_onboarding_done') === 'true' || safeStorageGet('melopair_taste_setup_v1') === 'true');
     const setOnboardingStage = (stage) => {
       onboardingStage = stage;
       tasteCheckingStep?.classList.add('hidden');
@@ -3917,6 +3919,21 @@ document.addEventListener('DOMContentLoaded', () => {
         tasteOnboardingStatus.textContent = `Signed in as ${user.displayName || user.email || 'your Google account'}`;
       }
     };
+
+    const onboardingCompleteOnThisDevice = safeStorageGet('melopair_onboarding_done') === 'true'
+      || safeStorageGet('melopair_taste_setup_v1') === 'true';
+    const hasExistingLocalProfile = [
+      safeStorageGet('echo_user_data_backup'),
+      safeStorageGet('echo_listening_history'),
+      safeStorageGet('echo_last_played_track'),
+      safeStorageGet('echo_profile_name'),
+      safeStorageGet('melopair_taste_preferences'),
+      safeStorageGet('melopair_imported_listening_memory')
+    ].some(value => value !== null && value !== '[]' && value !== '{}');
+    const firstRunInitialization = window.echoApi?.initializeFreshProfile
+      ? window.echoApi.initializeFreshProfile({ hasExistingProfile: hasExistingLocalProfile, onboardingComplete: onboardingCompleteOnThisDevice })
+        .catch(error => { console.warn('[Profile] Could not initialize first-run state:', error); return { showWelcomeWizard: false }; })
+      : Promise.resolve({ showWelcomeWizard: false });
 
     if (!tasteSetupComplete()) updateTasteOnboarding(null, false);
     const onboardingAccountCheckTimeout = setTimeout(() => {
@@ -3991,15 +4008,58 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (window.echoApi?.getFirebaseUser) {
-      window.echoApi.getFirebaseUser()
+      firstRunInitialization
+        .then(profileState => {
+          if (profileState?.showWelcomeWizard) {
+            forceWelcomeOnboarding = true;
+            onboardingReplay = true;
+            onboardingLaunchTour = true;
+            onboardingStage = 'taste';
+            tastePreferences = {};
+            importedListeningMemory = [];
+            try {
+              for (const key of ['melopair_onboarding_done', 'melopair_taste_setup_v1', 'melopair_taste_preferences', 'melopair_imported_listening_memory']) {
+                localStorage.removeItem(key);
+              }
+            } catch (error) { console.warn('[Profile] Could not clear stale first-run taste state:', error); }
+            document.querySelectorAll('.taste-options .taste-chip.selected').forEach(chip => {
+              chip.classList.remove('selected');
+              chip.setAttribute('aria-pressed', 'false');
+            });
+            restoreTasteSelections();
+            setOnboardingStage('taste');
+            updateTasteOnboarding(null, true);
+          }
+          return window.echoApi.getFirebaseUser();
+        })
         .then(user => {
           clearTimeout(onboardingAccountCheckTimeout);
           renderFirebaseAccount(user);
         })
         .catch(error => console.warn('[Firebase Auth] Could not load sign-in state:', error));
     } else {
-      clearTimeout(onboardingAccountCheckTimeout);
-      updateTasteOnboarding(null, true);
+      firstRunInitialization.then(profileState => {
+        clearTimeout(onboardingAccountCheckTimeout);
+        if (profileState?.showWelcomeWizard) {
+          forceWelcomeOnboarding = true;
+          onboardingReplay = true;
+          onboardingLaunchTour = true;
+          tastePreferences = {};
+          importedListeningMemory = [];
+          try {
+            for (const key of ['melopair_onboarding_done', 'melopair_taste_setup_v1', 'melopair_taste_preferences', 'melopair_imported_listening_memory']) {
+              localStorage.removeItem(key);
+            }
+          } catch (error) { console.warn('[Profile] Could not clear stale first-run taste state:', error); }
+          document.querySelectorAll('.taste-options .taste-chip.selected').forEach(chip => {
+            chip.classList.remove('selected');
+            chip.setAttribute('aria-pressed', 'false');
+          });
+          restoreTasteSelections();
+          setOnboardingStage('taste');
+        }
+        updateTasteOnboarding(null, true);
+      });
     }
 
     googleSignInBtn?.addEventListener('click', async () => {
@@ -4103,6 +4163,8 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('melopair_onboarding_done', 'true');
         localStorage.setItem('melopair_taste_setup_v1', 'true');
       } catch (error) { console.warn('[Taste] Could not save onboarding completion:', error); }
+      forceWelcomeOnboarding = false;
+      void window.echoApi?.markOnboardingComplete?.(true);
       onboardingReplay = false;
       tasteOnboarding?.classList.add('hidden');
       persistTasteProfile();
@@ -4245,7 +4307,21 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('mpFinishOnboardingBtn')?.addEventListener('click', finishOnboarding);
     document.getElementById('mpSkipOnboardingBtn')?.addEventListener('click', () => finishOnboarding(false));
     document.getElementById('settingsImportTasteBtn')?.addEventListener('click', () => { openOnboarding('import'); });
-    document.getElementById('settingsFeatureTourBtn')?.addEventListener('click', startFeatureTour);
+    document.getElementById('settingsFeatureTourBtn')?.addEventListener('click', () => {
+      onboardingReplay = true;
+      onboardingLaunchTour = true;
+      forceWelcomeOnboarding = true;
+      onboardingStage = 'taste';
+      try {
+        localStorage.removeItem('melopair_onboarding_done');
+        localStorage.removeItem('melopair_taste_setup_v1');
+      } catch (error) { console.warn('[Taste] Could not reset welcome progress:', error); }
+      void window.echoApi?.markOnboardingComplete?.(false);
+      setOnboardingStage('taste');
+      restoreTasteSelections();
+      tasteOnboarding?.classList.remove('hidden');
+      savePersistentState();
+    });
 
     const tourSteps = [
       { target: '#viewDiscovery', title: 'Listen Now & Smart Shelves', copy: 'Your personalized home feed, shaped by your chosen styles, languages, and listening taste.' },
@@ -7460,8 +7536,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const localImported = (() => { try { return JSON.parse(safeStorageGet('melopair_imported_listening_memory') || '[]'); } catch { return []; } })();
         importedListeningMemory = Array.isArray(localImported) && localImported.length ? localImported : (Array.isArray(data?.importedListeningMemory) ? data.importedListeningMemory : []);
         if (importedListeningMemory.length) localStorage.setItem('melopair_imported_listening_memory', JSON.stringify(importedListeningMemory));
-        if (data?.onboardingDone) localStorage.setItem('melopair_onboarding_done', 'true');
-        if (tastePreferences.genres?.length) localStorage.setItem('melopair_taste_setup_v1', 'true');
+        if (data?.onboardingDone === true) {
+          localStorage.setItem('melopair_onboarding_done', 'true');
+          localStorage.setItem('melopair_taste_setup_v1', 'true');
+        } else if (data?.onboardingDone === false) {
+          localStorage.removeItem('melopair_onboarding_done');
+          localStorage.removeItem('melopair_taste_setup_v1');
+        }
       } catch (error) {
         lastPlayedTrack = history[0] || null;
         lastPlayedPosition = 0;

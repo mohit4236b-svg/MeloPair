@@ -1,6 +1,6 @@
 {
   "name": "echo-ambient-player",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MeloPair music player with shared listening rooms, real-time sync, and synced lyrics",
   "main": "main.js",
   "scripts": {
@@ -92,7 +92,14 @@
       "firebase-hosting/firebase-config.json",
       "node_modules/**/*",
       "!node_modules/ffmpeg-static/ffmpeg.exe",
-      "!node_modules/ffprobe-static/bin/**"
+      "!node_modules/ffprobe-static/bin/**",
+      "!**/user-data*.json",
+      "!**/echo_user_data.json",
+      "!**/firebase-session.enc",
+      "!**/firebase-pending-login.enc",
+      "!**/hasInitializedFreshProfile.json",
+      "!**/Local Storage/**",
+      "!**/clean-smoke*/**"
     ]
   },
   "keywords": [

@@ -175,6 +175,21 @@ class MockIPC {
       return { success: true };
     });
 
+    ipcMain.handle('initialize-fresh-profile', async (event, profileSignals) => {
+      this.recordCall('initialize-fresh-profile', profileSignals);
+      if (this.overrides.has('initialize-fresh-profile')) {
+        return this.overrides.get('initialize-fresh-profile')(profileSignals);
+      }
+      return { isFirstLaunch: false, showWelcomeWizard: false };
+    });
+    ipcMain.handle('mark-onboarding-complete', async (event, completed) => {
+      this.recordCall('mark-onboarding-complete', completed);
+      if (this.overrides.has('mark-onboarding-complete')) {
+        return this.overrides.get('mark-onboarding-complete')(completed);
+      }
+      return true;
+    });
+
     // 13. get-room-info
     ipcMain.handle('get-room-info', async () => {
       this.recordCall('get-room-info', null);

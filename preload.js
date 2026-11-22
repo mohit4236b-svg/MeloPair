@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('echoApi', {
   close: () => ipcRenderer.invoke('window-close'),
   loadUserData: () => ipcRenderer.invoke('load-user-data'),
   saveUserData: (data) => ipcRenderer.invoke('save-user-data', data),
+  initializeFreshProfile: (profileSignals) => ipcRenderer.invoke('initialize-fresh-profile', profileSignals),
+  markOnboardingComplete: (completed) => ipcRenderer.invoke('mark-onboarding-complete', completed),
   startFirebaseSignIn: () => ipcRenderer.invoke('firebase-auth-start'),
   getFirebaseUser: () => ipcRenderer.invoke('firebase-auth-get-user'),
   signOutFirebaseUser: () => ipcRenderer.invoke('firebase-auth-signout'),

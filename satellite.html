@@ -1,0 +1,2786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Echo Party • Satellite Audio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #07090e;
+      --panel-bg: rgba(16, 20, 32, 0.75);
+      --accent: #a855f7;
+      --accent-glow: rgba(168, 85, 247, 0.35);
+      --text: #ffffff;
+      --text-muted: rgba(255, 255, 255, 0.65);
+      --border: rgba(255, 255, 255, 0.1);
+      --success: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    body {
+      background: var(--bg-dark);
+      color: var(--text);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* Ambient Dynamic Blurred Backdrop */
+    .backdrop-art {
+      position: fixed;
+      inset: -40px;
+      background-size: cover;
+      background-position: center;
+      filter: blur(60px) brightness(0.35);
+      transform: scale(1.15);
+      z-index: 0;
+      transition: background-image 0.8s ease;
+      opacity: 0.85;
+      pointer-events: none;
+    }
+
+    .ambient-overlay {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at center, transparent 30%, rgba(7, 9, 14, 0.85) 100%);
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* App Container */
+    .app-wrap {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      max-width: 540px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 16px 20px 24px;
+      gap: 16px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #a855f7, #ec4899);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 800;
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+
+    .brand-name {
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      font-size: 16px;
+    }
+
+    .room-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(168, 85, 247, 0.15);
+      border: 1px solid rgba(168, 85, 247, 0.35);
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #c084fc;
+      letter-spacing: 0.05em;
+    }
+
+    .room-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    /* Unlock Audio Banner (For Mobile Autoplay Policy) */
+    .unlock-banner {
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(236, 72, 153, 0.3));
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      padding: 14px 18px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
+      animation: pulseBanner 2s infinite ease-in-out;
+    }
+
+    @keyframes pulseBanner {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+    }
+
+    .unlock-banner.hidden {
+      display: none !important;
+    }
+
+    .unlock-text {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .unlock-btn {
+      background: #ffffff;
+      color: #07090e;
+      border: none;
+      font-size: 12px;
+      font-weight: 800;
+      padding: 6px 14px;
+      border-radius: 20px;
+    }
+
+    /* Main Player Card */
+    .player-card {
+      background: var(--panel-bg);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      gap: 16px;
+      position: relative;
+    }
+
+    .art-wrapper {
+      width: min(220px, 60vw);
+      height: min(220px, 60vw);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6), 0 0 20px var(--accent-glow);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      position: relative;
+    }
+
+    .art-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .track-meta {
+      text-align: center;
+      width: 100%;
+    }
+
+    .track-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffffff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+
+    .track-artist {
+      font-size: 14px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Live Progress Bar */
+    .seek-row {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .seek-bar-track {
+      width: 100%;
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.15);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .seek-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #a855f7, #ec4899);
+      border-radius: 3px;
+      transition: width 0.15s linear;
+    }
+
+    .time-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    /* Spatial Role Selector */
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 4px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
+
+    .spatial-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      width: 100%;
+    }
+
+    .spatial-pill {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      padding: 10px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .spatial-pill.active {
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(99, 102, 241, 0.35));
+      border-color: #c084fc;
+      color: #ffffff;
+      box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);
+    }
+
+    .spatial-pill span.icon {
+      font-size: 16px;
+    }
+
+    /* Live Kinetic Lyrics Snippet */
+    .lyrics-card {
+      background: var(--panel-bg);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 16px 20px;
+      width: 100%;
+      min-height: 100px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+
+    .lyric-past {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-bottom: 6px;
+      transition: all 0.3s;
+    }
+
+    .lyric-current {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 20px;
+      font-weight: 800;
+      color: #ffffff;
+      text-shadow: 0 0 20px rgba(192, 132, 252, 0.6);
+      line-height: 1.25;
+      transition: all 0.3s;
+    }
+
+    .lyric-next {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-top: 6px;
+      transition: all 0.3s;
+    }
+
+    /* Sync Stats & Hardware Audio Profiles */
+    .sync-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px 18px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .sync-stats-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .sync-pill {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #34d399;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+    }
+
+    /* Output Device Selector */
+    .device-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .device-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .device-profile-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 5px;
+      width: 100%;
+    }
+
+    .device-pill {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      padding: 8px 3px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: center;
+    }
+
+    .device-pill span.dev-icon {
+      font-size: 14px;
+    }
+
+    .device-pill span.dev-name {
+      font-size: 9px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .device-pill.active {
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(236, 72, 153, 0.35));
+      border-color: #c084fc;
+      color: #ffffff;
+      box-shadow: 0 0 12px rgba(168, 85, 247, 0.45);
+    }
+
+    .calibration-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .sat-auto-sync-readout {
+      width: fit-content;
+      max-width: 100%;
+      padding: 6px 10px;
+      border: 1px solid rgba(105, 220, 190, .18);
+      border-radius: 999px;
+      background: rgba(105, 220, 190, .08);
+      color: rgba(195, 245, 225, .88);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .cal-labels {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .cal-labels strong {
+      color: #c084fc;
+      font-size: 13px;
+    }
+
+    .cal-slider {
+      width: 100%;
+      -webkit-appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.2);
+      outline: none;
+    }
+
+    .cal-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #c084fc;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(192, 132, 252, 0.6);
+    }
+
+    .cal-presets {
+      display: flex;
+      gap: 5px;
+      margin-top: 4px;
+    }
+
+    .cal-preset-btn {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 5px 2px;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .cal-preset-btn.active {
+      background: rgba(168, 85, 247, 0.25);
+      border-color: #a855f7;
+      color: #ffffff;
+    }
+
+    .cal-nudge-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 5px;
+      margin-top: 4px;
+    }
+
+    .nudge-btn {
+      flex: 1;
+      background: rgba(168, 85, 247, 0.15);
+      border: 1px solid rgba(168, 85, 247, 0.35);
+      color: #c084fc;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 7px 2px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.12s ease;
+      text-align: center;
+    }
+
+    .nudge-btn:active {
+      transform: scale(0.93);
+      background: rgba(168, 85, 247, 0.38);
+    }
+
+    .nudge-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      padding: 0 2px;
+    }
+
+    /* Device Toast */
+    .device-toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: rgba(24, 20, 48, 0.95);
+      border: 1px solid #c084fc;
+      color: #ffffff;
+      padding: 10px 18px;
+      border-radius: 30px;
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6), 0 0 20px rgba(168, 85, 247, 0.4);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      z-index: 9999;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .device-toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Beep Fusion Calibration Modal */
+    .fusion-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 8, 24, 0.88);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .fusion-modal {
+      background: linear-gradient(135deg, rgba(30, 24, 60, 0.95), rgba(15, 12, 35, 0.98));
+      border: 1px solid #c084fc;
+      border-radius: 24px;
+      padding: 24px 20px;
+      width: 100%;
+      max-width: 380px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 30px rgba(168, 85, 247, 0.4);
+    }
+
+    .fusion-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .fusion-header h3 {
+      font-size: 17px;
+      font-weight: 800;
+      color: #ffffff;
+      margin: 0;
+    }
+
+    .fusion-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .fusion-desc b {
+      color: #c084fc;
+    }
+
+    .fusion-status-display {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .fusion-delay-label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .fusion-delay-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      font-weight: 800;
+      color: #34d399;
+    }
+
+    .fusion-nudge-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .fusion-big-btn {
+      border: none;
+      border-radius: 14px;
+      padding: 14px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 800;
+      transition: all 0.15s ease;
+    }
+
+    .fusion-big-btn.late {
+      background: rgba(236, 72, 153, 0.25);
+      border: 1px solid rgba(236, 72, 153, 0.6);
+      color: #f472b6;
+    }
+
+    .fusion-big-btn.late:active {
+      transform: scale(0.95);
+      background: rgba(236, 72, 153, 0.45);
+    }
+
+    .fusion-big-btn.early {
+      background: rgba(56, 189, 248, 0.25);
+      border: 1px solid rgba(56, 189, 248, 0.6);
+      color: #38bdf8;
+    }
+
+    .fusion-big-btn.early:active {
+      transform: scale(0.95);
+      background: rgba(56, 189, 248, 0.45);
+    }
+
+    .fusion-big-btn small {
+      font-size: 10px;
+      opacity: 0.8;
+    }
+
+    .fusion-fine-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .fusion-done-btn {
+      width: 100%;
+      background: linear-gradient(135deg, #10b981, #059669);
+      border: none;
+      border-radius: 14px;
+      padding: 14px 16px;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+      transition: all 0.2s ease;
+    }
+
+    .fusion-done-btn:active {
+      transform: scale(0.98);
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .test-pulse-btn {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      padding: 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .test-pulse-btn:hover {
+      background: rgba(168, 85, 247, 0.3);
+      border-color: #c084fc;
+    }
+
+    /* Satellite Room Quick Toolbar & Switcher */
+    .satellite-room-toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      width: 100%;
+    }
+
+    .sat-tool-btn {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #e2e8f0;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 8px 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+    }
+
+    .sat-tool-btn:hover {
+      background: rgba(168, 85, 247, 0.25);
+      border-color: #a855f7;
+      color: #ffffff;
+    }
+
+    .room-realign-btn {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 8px 12px;
+      white-space: nowrap;
+    }
+
+    /* Satellite Modal Styles */
+    .sat-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .sat-modal-card {
+      background: #12141e;
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      border-radius: 20px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.9);
+      overflow: hidden;
+    }
+
+    .sat-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .sat-modal-header h3 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .sat-modal-close {
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: #ffffff;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .sat-modal-body {
+      padding: 18px;
+    }
+
+    .sat-modal-desc {
+      font-size: 12px;
+      color: var(--text-dim, rgba(255, 255, 255, 0.7));
+      margin: 0 0 14px 0;
+      text-align: center;
+    }
+
+    .sat-scanner-box {
+      position: relative;
+      width: 100%;
+      height: 240px;
+      background: #000000;
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+
+    .sat-scanner-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .sat-scanner-reticle {
+      position: absolute;
+      width: 170px;
+      height: 170px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      border: 2px solid #a855f7;
+      border-radius: 12px;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+      pointer-events: none;
+    }
+
+    .sat-scanner-laser {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #c084fc, #38bdf8, transparent);
+      box-shadow: 0 0 10px #c084fc;
+      animation: satLaser 1.8s infinite alternate ease-in-out;
+    }
+
+    @keyframes satLaser {
+      0% { top: 4px; }
+      100% { top: calc(100% - 6px); }
+    }
+
+    .sat-scan-status {
+      position: absolute;
+      bottom: 8px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: #e2e8f0;
+      background: rgba(0, 0, 0, 0.65);
+      padding: 4px 8px;
+    }
+
+    .sat-code-input-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .sat-code-input {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 4px;
+      text-align: center;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #c084fc;
+      border-radius: 12px;
+      padding: 12px;
+      outline: none;
+      text-transform: uppercase;
+    }
+
+    .sat-code-input:focus {
+      border-color: #a855f7;
+      box-shadow: 0 0 16px rgba(168, 85, 247, 0.4);
+    }
+
+    .sat-primary-btn {
+      background: linear-gradient(135deg, #9333ea, #7c3aed);
+      border: none;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 12px;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(147, 51, 234, 0.4);
+    }
+
+    .sat-secondary-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: center;
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .sat-qr-display-box {
+      background: #ffffff;
+      padding: 14px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 14px auto;
+      width: 190px;
+      height: 190px;
+      box-sizing: border-box;
+    }
+
+    .sat-qr-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .sat-copy-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sat-share-input {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #a855f7;
+      font-size: 11px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      outline: none;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Dynamic Blurred Backdrop -->
+  <div class="backdrop-art" id="backdropArt"></div>
+  <div class="ambient-overlay"></div>
+
+  <!-- Dual Audio Engine for Seamless Satellite Crossfade -->
+  <audio id="syncAudioA" preload="auto" crossorigin="anonymous"></audio>
+  <audio id="syncAudioB" preload="auto" crossorigin="anonymous"></audio>
+
+  <div class="app-wrap">
+    <!-- Top Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-logo">E</div>
+        <span class="brand-name">Echo Satellite</span>
+      </div>
+      <div class="room-badge">
+        <div class="room-dot" id="statusDot"></div>
+        <span id="roomCodeDisplay">ROOM: ...</span>
+      </div>
+      <button type="button" class="sat-tool-btn room-realign-btn" id="roomRealignBtn" title="Force resync playback with Room host">↺ Realign</button>
+    </header>
+
+    <!-- Room Quick Action Toolbar -->
+    <div class="satellite-room-toolbar">
+      <button class="sat-tool-btn" id="satScanQrBtn">
+        <span>📷</span> <span>Scan QR</span>
+      </button>
+      <button class="sat-tool-btn" id="satEnterCodeBtn">
+        <span>🔢</span> <span>Enter Code</span>
+      </button>
+      <button class="sat-tool-btn" id="satShareQrBtn">
+        <span>📲</span> <span>Room QR</span>
+      </button>
+    </div>
+
+    <!-- Mobile Autoplay Unlock Banner -->
+    <div class="unlock-banner" id="unlockBanner">
+      <div class="unlock-text" id="unlockText">🔔 Tap to Sync Audio</div>
+      <button class="unlock-btn" id="unlockAudioBtn" type="button">TAP TO SYNC</button>
+    </div>
+
+    <!-- Main Player Card -->
+    <div class="player-card">
+      <div class="art-wrapper">
+        <img id="trackArt" class="art-img" src="default-art.png" alt="Artwork">
+      </div>
+
+      <div class="track-meta">
+        <h2 class="track-title" id="trackTitle">Connecting to Room...</h2>
+        <p class="track-artist" id="trackArtist">Waiting for Host</p>
+      </div>
+
+      <!-- Seek Bar -->
+      <div class="seek-row">
+        <div class="seek-bar-track">
+          <div class="seek-bar-fill" id="seekFill"></div>
+        </div>
+        <div class="time-row">
+          <span id="currTimeText">0:00</span>
+          <span id="durTimeText">0:00</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Spatial Speaker Channel Selector -->
+    <div class="section-title">
+      <span>Spatial Speaker Role</span>
+      <span id="roleLabel" style="color:#c084fc; text-transform:none;">Stereo</span>
+    </div>
+    <div class="spatial-grid">
+      <button class="spatial-pill active" data-role="stereo">
+        <span class="icon">🎧</span>
+        <span>Stereo</span>
+      </button>
+      <button class="spatial-pill" data-role="left">
+        <span class="icon">👈</span>
+        <span>Left Ch</span>
+      </button>
+      <button class="spatial-pill" data-role="right">
+        <span class="icon">👉</span>
+        <span>Right Ch</span>
+      </button>
+      <button class="spatial-pill" data-role="center">
+        <span class="icon">🎙️</span>
+        <span>Center Vocals</span>
+      </button>
+      <button class="spatial-pill" data-role="sub">
+        <span class="icon">🔊</span>
+        <span>Sub-Bass</span>
+      </button>
+      <button class="spatial-pill" data-role="surround">
+        <span class="icon">✨</span>
+        <span>3D Surround</span>
+      </button>
+    </div>
+
+    <!-- Live Synced Lyrics -->
+    <div class="lyrics-card">
+      <div class="lyric-past" id="lyricPast">...</div>
+      <div class="lyric-current" id="lyricCurr">♪ Connected to Echo Room ♪</div>
+      <div class="lyric-next" id="lyricNext">...</div>
+    </div>
+
+    <!-- Sync Statistics & Hardware Output Calibration -->
+    <div class="sync-card">
+      <div class="sync-stats-row">
+        <span id="syncStatus">Phase Locked ✨</span>
+        <div style="display:flex; gap:6px;">
+          <span class="sync-pill" id="syncSkewBadge">Skew: 0 ms</span>
+          <span class="sync-pill" id="syncPing">Ping: -- ms</span>
+        </div>
+      </div>
+
+      <!-- Output Device Profile Selector -->
+      <div class="device-section">
+        <div class="device-title-row">
+          <span>Output Hardware</span>
+          <span id="activeDeviceLabel" style="color:#c084fc; text-transform:none; font-weight:800;">Phone Speaker</span>
+        </div>
+        <div class="device-profile-grid">
+          <button class="device-pill active" data-device="speaker" title="Phone Built-in Speaker">
+            <span class="dev-icon">📱</span>
+            <span class="dev-name">Speaker</span>
+          </button>
+          <button class="device-pill" data-device="aux" title="Wired Headphones / 3.5mm Aux Cable">
+            <span class="dev-icon">🎧</span>
+            <span class="dev-name">Aux Wire</span>
+          </button>
+          <button class="device-pill" data-device="earbuds" title="Bluetooth Earbuds (AirPods, Galaxy Buds, TWS)">
+            <span class="dev-icon">📡</span>
+            <span class="dev-name">BT Buds</span>
+          </button>
+          <button class="device-pill" data-device="btspeaker" title="Bluetooth Soundbar or Party Speaker">
+            <span class="dev-icon">🔊</span>
+            <span class="dev-name">BT Spk</span>
+          </button>
+          <button class="device-pill" data-device="car" title="Car Audio via Bluetooth">
+            <span class="dev-icon">🚗</span>
+            <span class="dev-name">Car BT</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="calibration-row">
+        <div class="cal-labels">
+          <span>Manual Fine Trim (automatic output sync is active)</span>
+          <strong id="calVal">0 ms</strong>
+        </div>
+        <div class="sat-auto-sync-readout" id="autoSyncLatencyValue" aria-live="polite">Automatic estimate will appear after audio starts</div>
+        <input type="range" class="cal-slider" id="calSlider" min="-250" max="600" step="0.5" value="0">
+        
+        <!-- Precision Micro-Nudge Controls -->
+        <div class="cal-nudge-row">
+          <button class="nudge-btn" id="nudgeMinus20">-20ms</button>
+          <button class="nudge-btn" id="nudgeMinus1">-1ms</button>
+          <button class="nudge-btn" id="nudgeMinusHalf">-0.5ms</button>
+          <span class="nudge-label">Nudge</span>
+          <button class="nudge-btn" id="nudgePlusHalf">+0.5ms</button>
+          <button class="nudge-btn" id="nudgePlus1">+1ms</button>
+          <button class="nudge-btn" id="nudgePlus20">+20ms</button>
+        </div>
+
+        <div class="cal-presets">
+          <button class="cal-preset-btn active" data-cal="0">0ms Spk</button>
+          <button class="cal-preset-btn" data-cal="60">+60ms LL</button>
+          <button class="cal-preset-btn" data-cal="180">+180ms Buds</button>
+          <button class="cal-preset-btn" data-cal="240">+240ms Box</button>
+          <button class="cal-preset-btn" data-cal="350">+350ms Car</button>
+        </div>
+      </div>
+
+      <!-- Alignment & Latency Measurement Action Row -->
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:6px;">
+        <div style="display:flex; gap:8px;">
+          <button class="test-pulse-btn" id="micChirpBtn" style="background:rgba(236,72,153,0.22); border-color:rgba(236,72,153,0.55); color:#f472b6; flex:1;" title="Play test chirp and use phone mic to automatically measure hardware delay">
+            <span>🎙️</span>
+            <span id="micChirpText">Auto-Measure (Mic)</span>
+          </button>
+          <button class="test-pulse-btn" id="beepFusionBtn" style="background:rgba(168,85,247,0.22); border-color:rgba(168,85,247,0.55); color:#c084fc; flex:1;" title="Laptop plays High Tick, Phone plays Low Tock. Tap nudges until they fuse into 1 sound">
+            <span>🥁</span>
+            <span>Beep Fusion (PC+Phone)</span>
+          </button>
+        </div>
+
+        <div style="display:flex; gap:8px;">
+          <button class="test-pulse-btn" id="autoSnapBtn" style="background:rgba(16,185,129,0.2); border-color:rgba(16,185,129,0.5); color:#10b981; flex:1;">
+            <span>🎯</span>
+            <span>Force Align</span>
+          </button>
+          <button class="test-pulse-btn" id="testPulseBtn" style="flex:1;">
+            <span>⚡</span>
+            <span>Sync Pulse</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Beep Fusion Calibration Modal Overlay -->
+  <div class="fusion-overlay hidden" id="fusionOverlay">
+    <div class="fusion-modal">
+      <div class="fusion-header">
+        <span class="fusion-icon" style="font-size:24px;">🥁</span>
+        <h3>Laptop + Phone Fusion Calibration</h3>
+      </div>
+      <p class="fusion-desc">
+        Your Laptop is playing a <b>High Tick</b> 🔊.<br>
+        Your Phone/Earbud is playing a <b>Low Tock</b> 🎧.<br>
+        Listen closely. Tap buttons until both clicks fuse into <b>ONE solid click</b>!
+      </p>
+
+      <div class="fusion-status-display">
+        <span class="fusion-delay-label">Active Calibration:</span>
+        <span class="fusion-delay-val" id="fusionDelayVal">+180 ms</span>
+      </div>
+
+      <div class="fusion-nudge-group">
+        <button class="fusion-big-btn late" id="fusionLateBtn">
+          <span>⏩ Phone is Late</span>
+          <small>+10 ms</small>
+        </button>
+        <button class="fusion-big-btn early" id="fusionEarlyBtn">
+          <span>⏪ Phone is Early</span>
+          <small>-10 ms</small>
+        </button>
+      </div>
+
+      <div class="fusion-fine-row">
+        <button class="nudge-btn" id="fusionFineMinus2">-2ms</button>
+        <button class="nudge-btn" id="fusionFineMinus1">-1ms</button>
+        <button class="nudge-btn" id="fusionFineMinusHalf">-0.5ms</button>
+        <span class="nudge-label">Fine</span>
+        <button class="nudge-btn" id="fusionFinePlusHalf">+0.5ms</button>
+        <button class="nudge-btn" id="fusionFinePlus1">+1ms</button>
+        <button class="nudge-btn" id="fusionFinePlus2">+2ms</button>
+      </div>
+
+      <button class="fusion-done-btn" id="fusionDoneBtn">
+        🎯 Perfect Match! (Lock & Play Music)
+      </button>
+    </div>
+  </div>
+
+  <!-- Device Connected Toast -->
+  <div class="device-toast" id="deviceToast">
+    <span id="deviceToastIcon">🎧</span>
+    <span id="deviceToastMsg">Output Device Detected</span>
+  </div>
+
+  <script>
+    // ------------------------------------------------------------------------
+    // Satellite Room Client Script (NTP Clock Sync + Web Audio Spatial DSP)
+    // ------------------------------------------------------------------------
+    const pathParts = window.location.pathname.split('/');
+    const roomFromUrl = pathParts[pathParts.length - 1] || 'DEFAULT';
+
+    const roomCodeDisplay = document.getElementById('roomCodeDisplay');
+    roomCodeDisplay.textContent = `ROOM: ${roomFromUrl.toUpperCase()}`;
+
+    const trackTitle = document.getElementById('trackTitle');
+    const trackArtist = document.getElementById('trackArtist');
+    const trackArt = document.getElementById('trackArt');
+    const backdropArt = document.getElementById('backdropArt');
+    const seekFill = document.getElementById('seekFill');
+    const currTimeText = document.getElementById('currTimeText');
+    const durTimeText = document.getElementById('durTimeText');
+    const unlockBanner = document.getElementById('unlockBanner');
+    const unlockText = document.getElementById('unlockText');
+    const unlockAudioBtn = document.getElementById('unlockAudioBtn');
+    const syncPing = document.getElementById('syncPing');
+    const syncSkewBadge = document.getElementById('syncSkewBadge');
+    const syncStatus = document.getElementById('syncStatus');
+    const autoSnapBtn = document.getElementById('autoSnapBtn');
+    const calSlider = document.getElementById('calSlider');
+    const calVal = document.getElementById('calVal');
+    const roleLabel = document.getElementById('roleLabel');
+
+    const lyricPast = document.getElementById('lyricPast');
+    const lyricCurr = document.getElementById('lyricCurr');
+    const lyricNext = document.getElementById('lyricNext');
+
+    let audioA = document.getElementById('syncAudioA');
+    let audioB = document.getElementById('syncAudioB');
+    let activeAudio = audioA;
+    let idleAudio = audioB;
+    let currentPlayingTrackId = null;
+
+    let audioCtx = null;
+    let sourceNodeA = null;
+    let sourceNodeB = null;
+    let gainA = null;
+    let gainB = null;
+    let activeGain = null;
+    let idleGain = null;
+    let deckAOutputMode = 'native';
+    let deckBOutputMode = 'native';
+    let masterBus = null;
+
+    let splitterNode = null;
+    let mergerNode = null;
+    let leftGain = null;
+    let rightGain = null;
+    let subFilter = null;
+    let centerFilter = null;
+
+    let isAudioUnlocked = false;
+    let lastSatelliteSequenceId = 0;
+    let currentRole = 'stereo';
+    let currentTrack = null;
+    let lyricsArray = [];
+    let calDelayMs = 0;
+    let hostOutputLatencyMs = 0;
+
+    function connectSatelliteDeckSource(deck, name, gainNode) {
+      let source = null;
+      try {
+        source = audioCtx.createMediaElementSource(deck);
+      } catch (error) {
+        console.error(`[Satellite Audio] Deck ${name} MediaElementSource creation failed; using native element volume`, error);
+        return { source: null, gain: gainNode, mode: 'native' };
+      }
+
+      try {
+        source.connect(gainNode);
+        return { source, gain: gainNode, mode: 'web-audio' };
+      } catch (error) {
+        console.error(`[Satellite Audio] Deck ${name} source-to-gain connection failed; trying a fallback gain`, error);
+        try {
+          const fallbackGain = audioCtx.createGain();
+          fallbackGain.gain.setValueAtTime(1, audioCtx.currentTime);
+          source.connect(fallbackGain);
+          return { source, gain: fallbackGain, mode: 'web-audio' };
+        } catch (fallbackError) {
+          console.error(`[Satellite Audio] Deck ${name} fallback gain connection failed; trying direct context output`, fallbackError);
+          try {
+            source.connect(audioCtx.destination);
+            return { source, gain: gainNode, mode: 'direct-web-audio' };
+          } catch (destinationError) {
+            console.error(`[Satellite Audio] Deck ${name} could not connect to any output`, destinationError);
+            return { source, gain: gainNode, mode: 'unavailable' };
+          }
+        }
+      }
+    }
+
+    function setSatelliteDeckLevel(deck, value) {
+      if (!deck) return;
+      const level = Math.max(0, Math.min(1, Number(value) || 0));
+      const isDeckA = deck === audioA;
+      const deckGain = isDeckA ? gainA : gainB;
+      const outputMode = isDeckA ? deckAOutputMode : deckBOutputMode;
+      deck.muted = false;
+
+      if (outputMode === 'web-audio' && audioCtx && deckGain) {
+        deck.volume = 1;
+        deckGain.gain.setValueAtTime(level, audioCtx.currentTime);
+      } else {
+        // A source-creation failure leaves that element on its native output.
+        // Keep its gain node neutral in case the graph is inspected/recovered.
+        if (audioCtx && deckGain) deckGain.gain.setValueAtTime(1, audioCtx.currentTime);
+        deck.volume = level;
+      }
+    }
+
+    function logSatelliteDeckState(deck, name, reason) {
+      const isDeckA = deck === audioA;
+      const deckGain = isDeckA ? gainA : gainB;
+      console.error(`[Satellite Audio] ${reason}: Deck ${name} recovery state`, {
+        src: deck?.currentSrc || deck?.src || '',
+        trackId: deck?.dataset?.trackId || null,
+        paused: deck?.paused ?? null,
+        ended: deck?.ended ?? null,
+        readyState: deck?.readyState ?? null,
+        networkState: deck?.networkState ?? null,
+        currentTime: deck?.currentTime ?? null,
+        volume: deck?.volume ?? null,
+        muted: deck?.muted ?? null,
+        outputMode: isDeckA ? deckAOutputMode : deckBOutputMode,
+        sourceConnected: Boolean(isDeckA ? sourceNodeA : sourceNodeB),
+        gainValue: deckGain?.gain?.value ?? null,
+        audioContextState: audioCtx?.state || 'unavailable',
+        activeDeck: activeAudio === deck
+      });
+    }
+
+    async function recoverSatelliteActiveDeck(reason, position = null) {
+      const deck = activeAudio;
+      if (!deck) return false;
+      const isDeckA = deck === audioA;
+      setSatelliteDeckLevel(deck, 1);
+      setSatelliteDeckLevel(idleAudio, 0);
+      deck.muted = false;
+      if ((isDeckA ? deckAOutputMode : deckBOutputMode) === 'web-audio') deck.volume = 1;
+      if (Number.isFinite(position) && position >= 0 && (!Number.isFinite(deck.currentTime) || Math.abs(deck.currentTime - position) > 0.5)) {
+        try { deck.currentTime = position; } catch (error) {}
+      }
+      logSatelliteDeckState(deck, isDeckA ? 'A' : 'B', reason);
+      try {
+        if (audioCtx && audioCtx.state !== 'running') await audioCtx.resume();
+        if (deck.paused) await deck.play();
+        return !deck.paused;
+      } catch (error) {
+        console.error(`[Satellite Audio] ${reason}: active deck playback recovery failed`, error);
+        return false;
+      }
+    }
+
+    function swapSatelliteAudioRoles() {
+      const oldActive = activeAudio;
+      activeAudio = idleAudio;
+      idleAudio = oldActive;
+
+      const oldGain = activeGain;
+      activeGain = idleGain;
+      idleGain = oldGain;
+    }
+
+    // NTP Universal Clock State & Phase-Locked Loop (PLL)
+    let clockOffset = 0; // HostTime - ClientTime
+    let rtt = 0;
+    let minRtt = Infinity;
+    let oneWayLatencySec = 0;
+    let lastHostState = null;
+
+    // Connect to WebSocket Server on same host
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProto}//${window.location.host}/ws`;
+    let ws = null;
+    let wsReconnectTimer = null;
+    let wsHeartbeatTimer = null;
+    let wsPongTimer = null;
+    let wsReconnectAttempts = 0;
+    let wsRoomRejected = false;
+    let roomRealignPending = false;
+    let roomRealignFeedbackTimer = 0;
+    const roomRealignButton = document.getElementById('roomRealignBtn');
+
+    function flashRoomRealignButton() {
+      if (!roomRealignButton) return;
+      roomRealignButton.textContent = '✓ Synced';
+      clearTimeout(roomRealignFeedbackTimer);
+      roomRealignFeedbackTimer = setTimeout(() => {
+        roomRealignButton.textContent = '↺ Realign';
+        roomRealignFeedbackTimer = 0;
+      }, 1200);
+    }
+
+    function showAudioUnlock(message = '🔔 Tap to Sync Audio') {
+      if (unlockText) unlockText.textContent = message;
+      if (unlockAudioBtn) unlockAudioBtn.textContent = 'TAP TO SYNC';
+      unlockBanner.classList.remove('hidden');
+      isAudioUnlocked = false;
+      syncStatus.textContent = 'Tap to Sync Audio';
+      syncStatus.style.color = '#f59e0b';
+    }
+
+    roomRealignButton?.addEventListener('click', () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      roomRealignPending = true;
+      ws.send(JSON.stringify({ type: 'room-request-sync', clientSentAtMs: Date.now() }));
+    });
+
+    function initWebAudio() {
+      if (audioCtx) return;
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        updateAutoLatencyEstimate();
+
+        gainA = audioCtx.createGain();
+        gainB = audioCtx.createGain();
+        masterBus = audioCtx.createGain();
+
+        gainA.gain.setValueAtTime(1.0, audioCtx.currentTime);
+        gainB.gain.setValueAtTime(0.0, audioCtx.currentTime);
+
+        const deckAConnection = connectSatelliteDeckSource(audioA, 'A', gainA);
+        sourceNodeA = deckAConnection.source;
+        gainA = deckAConnection.gain;
+        deckAOutputMode = deckAConnection.mode;
+
+        const deckBConnection = connectSatelliteDeckSource(audioB, 'B', gainB);
+        sourceNodeB = deckBConnection.source;
+        gainB = deckBConnection.gain;
+        deckBOutputMode = deckBConnection.mode;
+
+        activeGain = gainA;
+        idleGain = gainB;
+
+        gainA.connect(masterBus);
+        gainB.connect(masterBus);
+
+        splitterNode = audioCtx.createChannelSplitter(2);
+        mergerNode = audioCtx.createChannelMerger(2);
+
+        leftGain = audioCtx.createGain();
+        rightGain = audioCtx.createGain();
+
+        // Subwoofer 120Hz low-pass filter
+        subFilter = audioCtx.createBiquadFilter();
+        subFilter.type = 'lowpass';
+        subFilter.frequency.value = 120;
+        subFilter.Q.value = 1.2;
+
+        // Center vocal 2.5kHz peaking filter
+        centerFilter = audioCtx.createBiquadFilter();
+        centerFilter.type = 'peaking';
+        centerFilter.frequency.value = 2500;
+        centerFilter.Q.value = 1.0;
+        centerFilter.gain.value = 4.0;
+
+        applySpatialRole(currentRole);
+        setSatelliteDeckLevel(audioA, 1);
+        setSatelliteDeckLevel(audioB, 0);
+        console.log('[Satellite Audio] Deck routing initialized', {
+          deckAOutputMode,
+          deckBOutputMode,
+          sourceNodeAConnected: Boolean(sourceNodeA),
+          sourceNodeBConnected: Boolean(sourceNodeB),
+          audioContextState: audioCtx.state
+        });
+      } catch (e) {
+        console.warn('Web Audio initialization:', e);
+      }
+    }
+
+    function applySpatialRole(role) {
+      currentRole = role;
+      roleLabel.textContent = role.toUpperCase();
+      if (!audioCtx || !masterBus) return;
+
+      try {
+        masterBus.disconnect();
+        if (splitterNode) splitterNode.disconnect();
+        if (leftGain) leftGain.disconnect();
+        if (rightGain) rightGain.disconnect();
+        if (subFilter) subFilter.disconnect();
+        if (centerFilter) centerFilter.disconnect();
+        if (mergerNode) mergerNode.disconnect();
+
+        if (role === 'stereo') {
+          // Standard full stereo
+          masterBus.connect(audioCtx.destination);
+        } else if (role === 'left') {
+          // Send Left channel to both ears/speakers
+          masterBus.connect(splitterNode);
+          splitterNode.connect(mergerNode, 0, 0);
+          splitterNode.connect(mergerNode, 0, 1);
+          mergerNode.connect(audioCtx.destination);
+        } else if (role === 'right') {
+          // Send Right channel to both ears/speakers
+          masterBus.connect(splitterNode);
+          splitterNode.connect(mergerNode, 1, 0);
+          splitterNode.connect(mergerNode, 1, 1);
+          mergerNode.connect(audioCtx.destination);
+        } else if (role === 'sub') {
+          // Subwoofer low-pass filter
+          masterBus.connect(subFilter);
+          subFilter.connect(audioCtx.destination);
+        } else if (role === 'center') {
+          // Vocals enhancer
+          masterBus.connect(centerFilter);
+          centerFilter.connect(audioCtx.destination);
+        } else {
+          masterBus.connect(audioCtx.destination);
+        }
+      } catch (e) {
+        console.warn('Spatial routing:', e);
+      }
+    }
+
+    // Unlock Audio Context on First User Touch
+    function unlockAudio() {
+      initWebAudio();
+      // Resume the shared context directly from the gesture. Empty preload decks
+      // cannot be used as unlock probes; their play() promise rejects without a source.
+      const contextResume = audioCtx && audioCtx.state !== 'running'
+        ? audioCtx.resume().then(() => true).catch((error) => {
+            console.error('[Satellite Audio] AudioContext gesture resume failed', error);
+            return false;
+          })
+        : Promise.resolve(true);
+      Promise.resolve(contextResume).then((contextReady) => {
+        if (!contextReady) {
+          showAudioUnlock('Audio is locked by the browser. Tap to try again.');
+          return;
+        }
+        isAudioUnlocked = true;
+        unlockBanner.classList.add('hidden');
+        if (lastHostState && lastHostState.isPlaying) syncToHostState(lastHostState, true);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ready', role: currentRole }));
+        }
+      }).catch((error) => {
+        console.error('[Satellite Audio] Tap to Sync Audio failed', error);
+        showAudioUnlock('Audio did not start. Tap to Sync Audio again.');
+      });
+    }
+
+    // The button is inside the banner; a single bubbling listener avoids duplicate retries.
+    unlockBanner.addEventListener('click', unlockAudio);
+
+    // WebSocket Room Protocol
+    function connectWs() {
+      clearInterval(wsHeartbeatTimer);
+      clearTimeout(wsPongTimer);
+      const socket = new WebSocket(wsUrl);
+      ws = socket;
+
+      socket.onopen = () => {
+        if (socket !== ws) return;
+        wsReconnectAttempts = 0;
+        wsRoomRejected = false;
+        document.getElementById('statusDot').style.background = '#10b981';
+        socket.send(JSON.stringify({
+          type: 'join',
+          room: roomFromUrl,
+          userAgent: navigator.userAgent
+        }));
+        startPingSync(socket);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'pong') clearTimeout(wsPongTimer);
+          if (msg.type === 'room_error') wsRoomRejected = true;
+          handleMessage(msg);
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      socket.onclose = () => {
+        if (socket !== ws) return;
+        clearInterval(wsHeartbeatTimer);
+        clearTimeout(wsPongTimer);
+        document.getElementById('statusDot').style.background = '#ef4444';
+        if (!wsRoomRejected) {
+          const delay = Math.min(30000, 1000 * (2 ** Math.min(wsReconnectAttempts, 5)));
+          wsReconnectAttempts++;
+          clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = setTimeout(() => {
+            wsReconnectTimer = null;
+            connectWs();
+          }, delay);
+        }
+      };
+      socket.onerror = () => socket.close();
+    }
+
+    // Ping-pong for Universal Clock Synchronization (Cristian's algorithm with outlier rejection)
+    function sendPing(socket = ws) {
+      if (socket && socket === ws && socket.readyState === WebSocket.OPEN) {
+        clearTimeout(wsPongTimer);
+        socket.send(JSON.stringify({
+          type: 'ping',
+          t1: performance.now(),
+          pingSentAtMs: Date.now()
+        }));
+        wsPongTimer = setTimeout(() => {
+          if (socket === ws && socket.readyState === WebSocket.OPEN) socket.close();
+        }, 10000);
+      }
+    }
+
+    function startPingSync(socket) {
+      // Rapid burst of 6 pings on initial connection to quickly lock clock offset
+      for (let i = 0; i < 6; i++) {
+        setTimeout(() => sendPing(socket), i * 80);
+      }
+      // Maintain clock lock and estimate tunnel latency every 5 seconds.
+      clearInterval(wsHeartbeatTimer);
+      wsHeartbeatTimer = setInterval(() => sendPing(socket), 5000);
+    }
+
+    function handleMessage(msg) {
+      if (msg.type === 'pong') {
+        const t4 = performance.now();
+        const curRtt = t4 - msg.t1;
+        if (curRtt < minRtt) minRtt = curRtt;
+        rtt = rtt === 0 ? curRtt : (rtt * 0.6 + curRtt * 0.4); // Smoothed RTT
+        if (Number.isFinite(msg.pingSentAtMs)) {
+          oneWayLatencySec = Math.min(2.5, Math.max(0, (Date.now() - msg.pingSentAtMs) / 2000));
+        }
+
+        // Use lowest RTT sample to reject queue/network spikes
+        const bestRtt = Math.min(curRtt, minRtt + 6);
+        const serverNow = msg.serverTime + (bestRtt / 2);
+        const curOffset = serverNow - Date.now();
+        clockOffset = clockOffset === 0 ? curOffset : (clockOffset * 0.7 + curOffset * 0.3);
+        syncPing.textContent = `Ping: ${Math.round(rtt)} ms`;
+
+        // If we received an earlier state_sync while clock was not yet calibrated, re-apply it
+        if (lastHostState && lastHostState.isPlaying && activeAudio && activeAudio.paused && isAudioUnlocked) {
+          syncToHostState(lastHostState, true);
+        }
+      } else if (msg.type === 'playback-control') {
+        // Discard out-of-order packets
+        if (typeof msg.sequenceId === 'number') {
+          if (msg.sequenceId < lastSatelliteSequenceId) return;
+          lastSatelliteSequenceId = msg.sequenceId;
+        }
+        if (msg.action === 'pause') {
+          if (activeAudio && !activeAudio.paused) activeAudio.pause();
+          if (idleAudio && !idleAudio.paused) idleAudio.pause();
+          if (msg.positionSec !== undefined && activeAudio) {
+            try { activeAudio.currentTime = msg.positionSec; } catch(e){}
+            currTimeText.textContent = formatTime(msg.positionSec);
+          }
+          syncStatus.textContent = 'Host Paused ⏸';
+          syncStatus.style.color = 'var(--text-muted)';
+        } else if (msg.action === 'stop') {
+          if (activeAudio) {
+            activeAudio.pause();
+            activeAudio.removeAttribute('src');
+            try { activeAudio.currentTime = 0; } catch(e){}
+          }
+          if (idleAudio) {
+            idleAudio.pause();
+            idleAudio.removeAttribute('src');
+            try { idleAudio.currentTime = 0; } catch(e){}
+          }
+          currentPlayingTrackId = null;
+          syncStatus.textContent = 'Playback Stopped ⏹';
+          syncStatus.style.color = 'var(--text-muted)';
+        }
+      } else if (msg.type === 'state_sync' || msg.type === 'track_change' || msg.type === 'room-sync-tick') {
+        if (typeof msg.sequenceId === 'number') {
+          if (msg.sequenceId < lastSatelliteSequenceId) return;
+          lastSatelliteSequenceId = msg.sequenceId;
+        }
+        syncToHostState(msg, Boolean(msg.forceSnap));
+        if (msg.hostConnected && !msg.track) {
+          syncStatus.textContent = 'Host connected · waiting for playback';
+          syncStatus.style.color = 'var(--text-muted)';
+        }
+        if (roomRealignPending && msg.type === 'room-sync-tick') {
+          roomRealignPending = false;
+          flashRoomRealignButton();
+        }
+      } else if (msg.type === 'force_snap') {
+        if (typeof msg.sequenceId === 'number') {
+          if (msg.sequenceId < lastSatelliteSequenceId) return;
+          lastSatelliteSequenceId = msg.sequenceId;
+        }
+        syncToHostState(msg, true);
+      } else if (msg.type === 'pause') {
+        if (activeAudio && !activeAudio.paused) activeAudio.pause();
+        if (idleAudio && !idleAudio.paused) idleAudio.pause();
+        if (msg.position !== undefined && activeAudio) {
+          try { activeAudio.currentTime = msg.position; } catch(e){}
+          currTimeText.textContent = formatTime(msg.position);
+        }
+        syncStatus.textContent = 'Host Paused ⏸';
+        syncStatus.style.color = 'var(--text-muted)';
+        if (activeAudio) activeAudio.playbackRate = 1.0;
+        if (idleAudio) idleAudio.playbackRate = 1.0;
+      } else if (msg.type === 'pulse') {
+        executeSyncPulse(msg.targetServerTime);
+      } else if (msg.type === 'beep_fusion_start') {
+        startBeepFusionMode(false);
+      } else if (msg.type === 'beep_fusion_stop') {
+        stopBeepFusionMode(false);
+      } else if (msg.type === 'lyrics') {
+        lyricsArray = msg.lyrics || [];
+      }
+    }
+
+    function updateTrackInfo(track) {
+      if (!track) return;
+      currentTrack = track;
+      trackTitle.textContent = track.title || 'MeloPair';
+      trackArtist.textContent = track.artist || 'Streaming';
+      const art = track.artwork || track.thumbnail || 'default-art.png';
+      trackArt.src = art;
+      backdropArt.style.backgroundImage = `url("${art}")`;
+      durTimeText.textContent = formatTime(track.duration || 214);
+    }
+
+    // Helper: Calculate internal Web Audio hardware output latency
+    function getHardwareBufferLatencySec() {
+      if (!audioCtx) return 0;
+      const outLat = (typeof audioCtx.outputLatency === 'number') ? audioCtx.outputLatency : 0;
+      const baseLat = (typeof audioCtx.baseLatency === 'number') ? audioCtx.baseLatency : 0;
+      return outLat > 0 ? outLat : baseLat;
+    }
+
+    function getOutputCompensationMs() {
+      const localLatencyMs = getHardwareBufferLatencySec() * 1000;
+      // Browser latency is an estimate. Keep user trim available for codecs or
+      // devices whose Bluetooth buffer is not reported by the operating system.
+      const estimatedDifference = localLatencyMs > 0
+        ? localLatencyMs - hostOutputLatencyMs
+        : 0;
+      return Math.max(-1000, Math.min(1500, calDelayMs + estimatedDifference));
+    }
+
+    function updateAutoLatencyEstimate() {
+      const display = document.getElementById('autoSyncLatencyValue');
+      if (!display) return;
+      const localLatencyMs = getHardwareBufferLatencySec() * 1000;
+      if (localLatencyMs > 0) {
+        const delta = localLatencyMs - hostOutputLatencyMs;
+        display.textContent = `Automatic output estimate ${delta >= 0 ? '+' : ''}${Math.round(delta)} ms`;
+      } else {
+        display.textContent = 'Automatic estimate unavailable · use the sync pulse to fine-tune';
+      }
+    }
+
+    // Phase-Locked Loop (PLL) Audio Synchronization Engine with Seamless DJ Crossfade Support
+    function syncToHostState(msg, forceSnap = false) {
+      if (!msg) return;
+      if (!Number.isFinite(msg.position) && Number.isFinite(msg.positionSec)) msg = { ...msg, position: msg.positionSec };
+      lastHostState = msg;
+
+      if (Number.isFinite(msg.outputLatencyMs)) {
+        hostOutputLatencyMs = Math.max(0, Math.min(1000, msg.outputLatencyMs));
+        updateAutoLatencyEstimate();
+      }
+
+      if (msg.track) updateTrackInfo(msg.track);
+      if (msg.lyrics) lyricsArray = msg.lyrics;
+
+      if (!msg.isPlaying) {
+        if (activeAudio && !activeAudio.paused) activeAudio.pause();
+        if (idleAudio && !idleAudio.paused) idleAudio.pause();
+        if (msg.position !== undefined && activeAudio) {
+          try { activeAudio.currentTime = msg.position; } catch(e){}
+          currTimeText.textContent = formatTime(msg.position);
+        }
+        syncStatus.textContent = 'Host Paused ⏸';
+        syncStatus.style.color = 'var(--text-muted)';
+        if (activeAudio) activeAudio.playbackRate = 1.0;
+        if (idleAudio) idleAudio.playbackRate = 1.0;
+        return;
+      }
+
+      // 1. Pre-buffer upcoming next track on idle player ahead of crossfade
+      const upcoming = msg.incomingTrack || msg.nextTrack;
+      if (upcoming && upcoming.id && upcoming.id !== currentPlayingTrackId) {
+        const upcomingUrl = window.location.origin + `/stream?id=${encodeURIComponent(upcoming.id)}`;
+        if (idleAudio && idleAudio.src !== upcomingUrl) {
+          idleAudio.preload = 'auto';
+          idleAudio.src = upcomingUrl;
+          idleAudio.dataset.trackId = upcoming.id;
+          idleAudio.load();
+        }
+      }
+
+      const calSec = getOutputCompensationMs() / 1000;
+      const currentHostNow = Date.now() + clockOffset;
+      const hostSentAtMs = Number(msg.hostSentAtMs || msg.hostTime || msg.roomPlaybackState?.hostSentAtMs || msg.roomPlaybackState?.updatedAtMs || msg.timestamp);
+      const elapsedSinceMeasure = msg.isPlaying && Number.isFinite(hostSentAtMs)
+        ? Math.max(0, (currentHostNow - hostSentAtMs) / 1000) + Math.max(0, Number(msg.oneWayLatencySec) || oneWayLatencySec)
+        : 0;
+
+      // 2. Seamless DJ Mashup Crossfade Phase: Both outgoing & incoming tracks play in phase-lock
+      if (msg.isCrossfading && upcoming && upcoming.id) {
+        const upcomingUrl = window.location.origin + `/stream?id=${encodeURIComponent(upcoming.id)}`;
+        if (idleAudio && idleAudio.src !== upcomingUrl) {
+          idleAudio.preload = 'auto';
+          idleAudio.src = upcomingUrl;
+          idleAudio.dataset.trackId = upcoming.id;
+          idleAudio.load();
+        }
+
+        const trueIncomingPos = (msg.incomingPosition !== undefined ? msg.incomingPosition : 0) + elapsedSinceMeasure + calSec;
+        const trueOutgoingPos = (msg.position !== undefined ? msg.position : 0) + elapsedSinceMeasure + calSec;
+
+        if (isAudioUnlocked) {
+          if (idleAudio && idleAudio.paused) {
+            if (isFinite(trueIncomingPos) && trueIncomingPos >= 0) {
+              try { idleAudio.currentTime = trueIncomingPos; } catch(e){}
+            }
+            idleAudio.play().catch((error) => {
+              console.error('[Satellite Audio] Incoming deck play failed during room crossfade', error);
+              logSatelliteDeckState(idleAudio, idleAudio === audioA ? 'A' : 'B', 'crossfade incoming play failure');
+              showAudioUnlock();
+              void recoverSatelliteActiveDeck('crossfade incoming play failed', trueOutgoingPos);
+            });
+          } else if (idleAudio && Math.abs(idleAudio.currentTime - trueIncomingPos) > 0.16) {
+            try { idleAudio.currentTime = Math.max(0, trueIncomingPos); } catch(e){}
+          }
+
+          if (activeAudio && activeAudio.paused) {
+            if (isFinite(trueOutgoingPos) && trueOutgoingPos >= 0) {
+              try { activeAudio.currentTime = trueOutgoingPos; } catch(e){}
+            }
+            activeAudio.play().catch((error) => {
+              console.error('[Satellite Audio] Active deck play failed during room crossfade', error);
+              logSatelliteDeckState(activeAudio, activeAudio === audioA ? 'A' : 'B', 'crossfade active play failure');
+              showAudioUnlock();
+              void recoverSatelliteActiveDeck('crossfade active play failed', trueOutgoingPos);
+            });
+          } else if (activeAudio && Math.abs(activeAudio.currentTime - trueOutgoingPos) > 0.16) {
+            try { activeAudio.currentTime = Math.max(0, trueOutgoingPos); } catch(e){}
+          }
+        }
+
+        const fadeDurationSec = Math.max(0, Number(msg.crossfadeDurationMs) || 0) / 1000;
+        const p = Math.max(0, Math.min(1.0,
+          (msg.crossfadeProgress || 0) + (fadeDurationSec > 0 ? elapsedSinceMeasure / fadeDurationSec : 0)));
+        const outVol = Math.cos(p * 0.5 * Math.PI);
+        const inVol = Math.sin(p * 0.5 * Math.PI);
+
+        setSatelliteDeckLevel(activeAudio, outVol);
+        setSatelliteDeckLevel(idleAudio, inVol);
+
+        syncStatus.textContent = `DJ Crossfade (${Math.round(p * 100)}%) 🎧`;
+        syncStatus.style.color = '#38bdf8';
+        return;
+      }
+
+      // 3. Normal Track Playback (Not in crossfade)
+      if (msg.track && msg.track.id) {
+        const streamUrl = window.location.origin + `/stream?id=${encodeURIComponent(msg.track.id)}`;
+        if (currentPlayingTrackId !== msg.track.id) {
+          const idleMatchesNext = idleAudio && (
+            idleAudio.dataset.trackId === msg.track.id || idleAudio.src === streamUrl
+          );
+          if (idleMatchesNext) {
+            // Smooth promotion of crossfaded track to active role
+            const outgoingDeck = activeAudio;
+            swapSatelliteAudioRoles();
+            outgoingDeck.pause();
+            try { outgoingDeck.currentTime = 0; } catch(e){}
+            outgoingDeck.playbackRate = 1;
+          } else if (activeAudio && activeAudio.src !== streamUrl) {
+            activeAudio.src = streamUrl;
+            activeAudio.dataset.trackId = msg.track.id;
+            activeAudio.load();
+          }
+          currentPlayingTrackId = msg.track.id;
+        } else if (idleAudio && (idleAudio.dataset.trackId === msg.track.id || idleAudio.src === streamUrl)) {
+          const outgoingDeck = activeAudio;
+          swapSatelliteAudioRoles();
+          outgoingDeck.pause();
+          try { outgoingDeck.currentTime = 0; } catch(e){}
+          outgoingDeck.playbackRate = 1;
+        }
+
+        const promotedIsA = activeAudio === audioA;
+        const promotedGain = promotedIsA ? gainA : gainB;
+        const promotedMode = promotedIsA ? deckAOutputMode : deckBOutputMode;
+        const gainBeforePromotionReset = promotedGain?.gain?.value ?? null;
+        const mutedBeforePromotionReset = activeAudio?.muted ?? false;
+        setSatelliteDeckLevel(activeAudio, 1.0);
+        setSatelliteDeckLevel(idleAudio, 0.0);
+
+        const promotedLevel = promotedMode === 'web-audio'
+          ? (promotedGain?.gain?.value ?? 0)
+          : (activeAudio?.volume ?? 0);
+        if (promotedMode === 'web-audio' && Number.isFinite(gainBeforePromotionReset) && gainBeforePromotionReset <= 0.001) {
+          console.error('[Satellite Audio] Promoted deck had zero gain before its reset', {
+            trackId: msg.track.id,
+            deck: promotedIsA ? 'A' : 'B',
+            gainBeforePromotionReset,
+            gainAfterPromotionReset: promotedLevel,
+            audioContextState: audioCtx?.state || 'unavailable'
+          });
+        }
+        if (!activeAudio || mutedBeforePromotionReset || activeAudio.muted || !Number.isFinite(promotedLevel) || promotedLevel <= 0.001) {
+          logSatelliteDeckState(activeAudio, promotedIsA ? 'A' : 'B', `room track ${msg.track.id} promoted with zero output level`);
+          void recoverSatelliteActiveDeck(`room track ${msg.track.id} promotion recovery`);
+        }
+      }
+
+      if (!isAudioUnlocked) {
+        showAudioUnlock();
+        syncStatus.style.color = '#f59e0b';
+        return;
+      }
+
+      const trueHostPosition = (msg.position !== undefined ? msg.position : 0) + elapsedSinceMeasure + calSec;
+
+      if (activeAudio && activeAudio.paused) {
+        const startPlaybackAtPosition = () => {
+          if (isFinite(trueHostPosition) && trueHostPosition >= 0) {
+            try { activeAudio.currentTime = trueHostPosition; } catch(e){}
+          }
+          activeAudio.play().then(() => {
+            unlockBanner.classList.add('hidden');
+            syncStatus.textContent = 'Connecting...';
+          }).catch((error) => {
+            console.error('[Satellite Audio] Active track play failed after room state update', error);
+            logSatelliteDeckState(activeAudio, activeAudio === audioA ? 'A' : 'B', 'normal track play failure');
+            showAudioUnlock();
+            void recoverSatelliteActiveDeck('normal track play failed', trueHostPosition);
+          });
+        };
+
+        if (activeAudio.readyState >= 1) { // HAVE_METADATA or higher
+          startPlaybackAtPosition();
+        } else {
+          activeAudio.addEventListener('loadedmetadata', startPlaybackAtPosition, { once: true });
+        }
+        return;
+      }
+
+      // 4. Continuous Proportional Speed Governor (PLL)
+      const localPos = activeAudio ? activeAudio.currentTime : 0;
+      const skew = localPos - trueHostPosition; // in seconds
+      const skewMs = skew * 1000;
+
+      if (syncSkewBadge) {
+        const roundedMs = Math.round(skewMs * 10) / 10;
+        syncSkewBadge.textContent = `Skew: ${roundedMs > 0 ? '+' : ''}${roundedMs}ms`;
+        syncSkewBadge.style.color = Math.abs(roundedMs) <= 1.5 ? '#10b981' : (skewMs < 0 ? '#ef4444' : '#f59e0b');
+      }
+
+      // Snap immediately if drift > 1.2s (or > 0.35s standard threshold)
+      if (forceSnap || Math.abs(skew) > 1.2 || Math.abs(skew) > 0.35) {
+        if (activeAudio) {
+          try { activeAudio.currentTime = Math.max(0, trueHostPosition); } catch(e){}
+          activeAudio.playbackRate = 1.0;
+        }
+        syncStatus.textContent = `Aligned (${Math.round(skewMs)}ms) 🎯`;
+        syncStatus.style.color = '#10b981';
+      } else if (Math.abs(skew) > 0.015) {
+        const Kp = 0.25;
+        const speedDelta = -skew * Kp;
+        const targetRate = Math.max(0.96, Math.min(1.04, 1.0 + speedDelta));
+        if (activeAudio) activeAudio.playbackRate = targetRate;
+
+        if (Math.abs(skew) <= 0.002) {
+          syncStatus.textContent = `Phase Locked (±${Math.abs(skewMs).toFixed(1)}ms) 🎯`;
+          syncStatus.style.color = '#10b981';
+        } else if (skew < 0) {
+          syncStatus.textContent = `Aligning +${Math.abs(skewMs).toFixed(0)}ms (${targetRate.toFixed(3)}x) ⏩`;
+          syncStatus.style.color = '#38bdf8';
+        } else {
+          syncStatus.textContent = `Aligning -${skewMs.toFixed(0)}ms (${targetRate.toFixed(3)}x) ⏪`;
+          syncStatus.style.color = '#38bdf8';
+        }
+      } else {
+        if (activeAudio) activeAudio.playbackRate = 1.0;
+        syncStatus.textContent = `Zero Mismatch Lock (0ms) 🎯`;
+        syncStatus.style.color = '#10b981';
+      }
+    }
+
+    // 1-Tap Sync Pulse (Synchronized Web Audio Click)
+    function executeSyncPulse(targetServerTime) {
+      if (!audioCtx) initWebAudio();
+      if (!audioCtx) return;
+
+      const hostNow = Date.now() + clockOffset;
+      const waitMs = (targetServerTime - hostNow) + getOutputCompensationMs();
+
+      setTimeout(() => {
+        try {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = 1000;
+          gain.gain.setValueAtTime(0.8, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.05);
+        } catch (e) {}
+      }, Math.max(0, waitMs));
+    }
+
+    document.getElementById('testPulseBtn').addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'request_pulse' }));
+      }
+    });
+
+    if (autoSnapBtn) {
+      autoSnapBtn.addEventListener('click', () => {
+        if (lastHostState) {
+          syncToHostState(lastHostState, true);
+        }
+      });
+    }
+
+    // Spatial Role Buttons
+    document.querySelectorAll('.spatial-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.spatial-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        applySpatialRole(btn.getAttribute('data-role'));
+      });
+    });
+
+    // ------------------------------------------------------------------------
+    // Hardware Output Profiles & Independent Per-Device Memory
+    // ------------------------------------------------------------------------
+    const DEVICE_PROFILES = {
+      speaker:   { name: 'Phone Speaker', defaultDelay: 0,   icon: '📱' },
+      aux:       { name: 'Wired Aux Cable', defaultDelay: 0, icon: '🎧' },
+      earbuds:   { name: 'Bluetooth Earbuds', defaultDelay: 180, icon: '📡' },
+      btspeaker: { name: 'Bluetooth Speaker', defaultDelay: 240, icon: '🔊' },
+      car:       { name: 'Car Bluetooth', defaultDelay: 350, icon: '🚗' }
+    };
+
+    let currentDevice = 'speaker';
+    const activeDeviceLabel = document.getElementById('activeDeviceLabel');
+
+    function loadDeviceProfile(devKey, showToastAlert = false) {
+      if (!DEVICE_PROFILES[devKey]) return;
+      currentDevice = devKey;
+      const profile = DEVICE_PROFILES[devKey];
+
+      // Update UI active state
+      document.querySelectorAll('.device-pill').forEach(pill => {
+        pill.classList.toggle('active', pill.getAttribute('data-device') === devKey);
+      });
+      if (activeDeviceLabel) {
+        activeDeviceLabel.textContent = profile.name;
+      }
+
+      // Load saved calibration for this specific output hardware
+      let loadedDelay = profile.defaultDelay;
+      try {
+        const saved = localStorage.getItem(`echo_cal_dev_${devKey}`);
+        if (saved !== null) {
+          loadedDelay = parseInt(saved, 10);
+        } else if (devKey !== 'speaker' && devKey !== 'aux' && getHardwareBufferLatencySec() > 0) {
+          // Prefer measured output latency to generic codec presets when the
+          // browser exposes a real device estimate.
+          loadedDelay = 0;
+        }
+      } catch (e) {}
+
+      updateCalDelay(loadedDelay, false);
+
+      if (showToastAlert) {
+        showDeviceToast(`${profile.icon} Switched to ${profile.name} (${loadedDelay > 0 ? '+' : ''}${loadedDelay}ms)`);
+      }
+    }
+
+    function updateCalDelay(newMs, persist = true) {
+      calDelayMs = Math.max(-250, Math.min(600, Math.round(parseFloat(newMs) * 2) / 2));
+      calSlider.value = calDelayMs;
+      const displayVal = Number.isInteger(calDelayMs) ? calDelayMs : calDelayMs.toFixed(1);
+      calVal.textContent = `${calDelayMs > 0 ? '+' : ''}${displayVal} ms`;
+
+      const fusionDelayVal = document.getElementById('fusionDelayVal');
+      if (fusionDelayVal) {
+        fusionDelayVal.textContent = `${calDelayMs > 0 ? '+' : ''}${displayVal} ms`;
+      }
+
+      if (persist) {
+        try {
+          localStorage.setItem(`echo_cal_dev_${currentDevice}`, calDelayMs);
+          localStorage.setItem('echo_party_cal_delay', calDelayMs);
+        } catch (e) {}
+      }
+
+      // Highlight active preset button if match
+      document.querySelectorAll('.cal-preset-btn').forEach(btn => {
+        btn.classList.toggle('active', parseFloat(btn.getAttribute('data-cal')) === calDelayMs);
+      });
+
+      if (lastHostState && lastHostState.isPlaying && !isBeepFusionActive) {
+        syncToHostState(lastHostState, true);
+      }
+    }
+
+    // Hardware Profile Buttons
+    document.querySelectorAll('.device-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const dev = btn.getAttribute('data-device');
+        loadDeviceProfile(dev, true);
+      });
+    });
+
+    // Precision Micro-Nudge Buttons (-20ms, -1ms, -0.5ms, +0.5ms, +1ms, +20ms)
+    const nudgeMinus20 = document.getElementById('nudgeMinus20');
+    const nudgeMinus1 = document.getElementById('nudgeMinus1');
+    const nudgeMinusHalf = document.getElementById('nudgeMinusHalf');
+    const nudgePlusHalf = document.getElementById('nudgePlusHalf');
+    const nudgePlus1 = document.getElementById('nudgePlus1');
+    const nudgePlus20 = document.getElementById('nudgePlus20');
+
+    if (nudgeMinus20) nudgeMinus20.addEventListener('click', () => updateCalDelay(calDelayMs - 20));
+    if (nudgeMinus1) nudgeMinus1.addEventListener('click', () => updateCalDelay(calDelayMs - 1));
+    if (nudgeMinusHalf) nudgeMinusHalf.addEventListener('click', () => updateCalDelay(calDelayMs - 0.5));
+    if (nudgePlusHalf) nudgePlusHalf.addEventListener('click', () => updateCalDelay(calDelayMs + 0.5));
+    if (nudgePlus1) nudgePlus1.addEventListener('click', () => updateCalDelay(calDelayMs + 1));
+    if (nudgePlus20) nudgePlus20.addEventListener('click', () => updateCalDelay(calDelayMs + 20));
+
+    // Calibration Slider
+    calSlider.addEventListener('input', (e) => {
+      updateCalDelay(parseFloat(e.target.value));
+    });
+
+    // Preset Buttons
+    document.querySelectorAll('.cal-preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        updateCalDelay(parseInt(btn.getAttribute('data-cal'), 10));
+      });
+    });
+
+    // Floating Toast Notification
+    const deviceToast = document.getElementById('deviceToast');
+    const deviceToastMsg = document.getElementById('deviceToastMsg');
+    let toastTimer = null;
+
+    function showDeviceToast(msg) {
+      if (!deviceToast || !deviceToastMsg) return;
+      deviceToastMsg.textContent = msg;
+      deviceToast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        deviceToast.classList.remove('show');
+      }, 3000);
+    }
+
+    // Automatic Hardware Device Change Detection
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', async () => {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const hasBtOrHeadphones = devices.some(d => {
+            const label = (d.label || '').toLowerCase();
+            return label.includes('bluetooth') || label.includes('wireless') || label.includes('headset') || label.includes('buds') || label.includes('airpod') || label.includes('earphone');
+          });
+
+          if (hasBtOrHeadphones && currentDevice === 'speaker') {
+            loadDeviceProfile('earbuds', true);
+          } else if (!hasBtOrHeadphones && (currentDevice === 'earbuds' || currentDevice === 'btspeaker')) {
+            loadDeviceProfile('speaker', true);
+          }
+        } catch (e) {
+          console.warn('Device change check error:', e);
+        }
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // 1. Automatic Acoustic Latency Measurement (Mic Chirp Loopback)
+    // ------------------------------------------------------------------------
+    const micChirpBtn = document.getElementById('micChirpBtn');
+    const micChirpText = document.getElementById('micChirpText');
+    let isMicMeasuring = false;
+
+    async function startMicAutoMeasure() {
+      if (isMicMeasuring) return;
+      isMicMeasuring = true;
+      let stream = null;
+      let micSource = null;
+      let filter = null;
+      let analyser = null;
+      if (micChirpText) micChirpText.textContent = 'Measuring...';
+      showDeviceToast('🎙️ Hold earbud/speaker near phone mic...');
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
+
+        initWebAudio();
+        if (!audioCtx) {
+          isMicMeasuring = false;
+          if (micChirpText) micChirpText.textContent = 'Auto-Measure (Mic)';
+          return;
+        }
+
+        micSource = audioCtx.createMediaStreamSource(stream);
+        filter = audioCtx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.value = 1800;
+
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0;
+
+        micSource.connect(filter);
+        filter.connect(analyser);
+
+        const timeData = new Uint8Array(analyser.fftSize);
+
+        // Warm-up silence baseline
+        await new Promise(r => setTimeout(r, 350));
+
+        const detectedDeltas = [];
+        const numPings = 3;
+
+        for (let p = 0; p < numPings; p++) {
+          const chirpStart = audioCtx.currentTime + 0.05;
+          const osc = audioCtx.createOscillator();
+          const g = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(2400, chirpStart);
+          g.gain.setValueAtTime(0.001, chirpStart);
+          g.gain.linearRampToValueAtTime(0.9, chirpStart + 0.004);
+          g.gain.exponentialRampToValueAtTime(0.001, chirpStart + 0.035);
+          osc.connect(g);
+          g.connect(audioCtx.destination);
+          osc.start(chirpStart);
+          osc.stop(chirpStart + 0.04);
+
+          const sendPerfTime = performance.now() + 50;
+          const listenDeadline = sendPerfTime + 650;
+          let found = false;
+
+          while (performance.now() < listenDeadline) {
+            analyser.getByteTimeDomainData(timeData);
+            let maxPeak = 0;
+            for (let i = 0; i < timeData.length; i++) {
+              const diff = Math.abs(timeData[i] - 128);
+              if (diff > maxPeak) maxPeak = diff;
+            }
+
+            if (maxPeak > 32 && (performance.now() - sendPerfTime > 15)) {
+              const deltaMs = Math.round(performance.now() - sendPerfTime);
+              detectedDeltas.push(deltaMs);
+              found = true;
+              break;
+            }
+            await new Promise(r => setTimeout(r, 4));
+          }
+
+          await new Promise(r => setTimeout(r, 180));
+        }
+
+        if (detectedDeltas.length > 0) {
+          detectedDeltas.sort((a, b) => a - b);
+          const medianVal = detectedDeltas[Math.floor(detectedDeltas.length / 2)];
+          const reportedOutputLatencyMs = getHardwareBufferLatencySec() * 1000;
+          // Store only the correction not already supplied automatically by
+          // AudioContext.outputLatency, avoiding double compensation.
+          const manualTrim = reportedOutputLatencyMs > 0
+            ? medianVal - reportedOutputLatencyMs
+            : medianVal;
+          updateCalDelay(manualTrim, true);
+          showDeviceToast(`🎯 Acoustic delay measured: +${medianVal}ms. Sync trim updated.`);
+        } else {
+          showDeviceToast('⚠️ No chirp detected. Hold closer to mic & retry.');
+        }
+      } catch (err) {
+        console.warn('Mic measure error:', err);
+        showDeviceToast('❌ Mic permission denied or unavailable');
+      } finally {
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        try { micSource?.disconnect(); } catch (e) {}
+        try { filter?.disconnect(); } catch (e) {}
+        try { analyser?.disconnect(); } catch (e) {}
+        isMicMeasuring = false;
+        if (micChirpText) micChirpText.textContent = 'Auto-Measure (Mic)';
+      }
+    }
+
+    if (micChirpBtn) micChirpBtn.addEventListener('click', startMicAutoMeasure);
+
+    // ------------------------------------------------------------------------
+    // 2. Dual Beep Fusion (Sync Phone Earbuds to Laptop Speakers)
+    // ------------------------------------------------------------------------
+    let isBeepFusionActive = false;
+    let beepFusionInterval = null;
+    const beepFusionBtn = document.getElementById('beepFusionBtn');
+    const fusionOverlay = document.getElementById('fusionOverlay');
+    const fusionDelayVal = document.getElementById('fusionDelayVal');
+    const fusionLateBtn = document.getElementById('fusionLateBtn');
+    const fusionEarlyBtn = document.getElementById('fusionEarlyBtn');
+    const fusionFineMinus2 = document.getElementById('fusionFineMinus2');
+    const fusionFineMinus1 = document.getElementById('fusionFineMinus1');
+    const fusionFineMinusHalf = document.getElementById('fusionFineMinusHalf');
+    const fusionFinePlusHalf = document.getElementById('fusionFinePlusHalf');
+    const fusionFinePlus1 = document.getElementById('fusionFinePlus1');
+    const fusionFinePlus2 = document.getElementById('fusionFinePlus2');
+    const fusionDoneBtn = document.getElementById('fusionDoneBtn');
+
+    function playSatelliteTock() {
+      if (!audioCtx) initWebAudio();
+      if (!audioCtx) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(850, audioCtx.currentTime); // 850Hz low tock for phone
+        g.gain.setValueAtTime(0.001, audioCtx.currentTime);
+        g.gain.linearRampToValueAtTime(0.85, audioCtx.currentTime + 0.004);
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
+        osc.connect(g);
+        g.connect(audioCtx.destination);
+        osc.start(audioCtx.currentTime);
+        osc.stop(audioCtx.currentTime + 0.05);
+      } catch (e) {}
+    }
+
+    function startBeepFusionMode(notifyServer = true) {
+      isBeepFusionActive = true;
+      if (activeAudio && !activeAudio.paused) activeAudio.pause();
+      if (idleAudio && !idleAudio.paused) idleAudio.pause();
+      if (fusionOverlay) fusionOverlay.classList.remove('hidden');
+      if (fusionDelayVal) {
+        const displayVal = Number.isInteger(calDelayMs) ? calDelayMs : calDelayMs.toFixed(1);
+        fusionDelayVal.textContent = `${calDelayMs > 0 ? '+' : ''}${displayVal} ms`;
+      }
+
+      if (notifyServer && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'start_beep_fusion' }));
+      }
+
+      clearInterval(beepFusionInterval);
+      beepFusionInterval = setInterval(() => {
+        const hostNow = Date.now() + clockOffset;
+        const nextSec = Math.ceil(hostNow / 1000) * 1000;
+        // Schedule tock so that when compensated by calDelayMs, it hits nextSec in physical ears
+        const waitMs = (nextSec - hostNow) + getOutputCompensationMs();
+        setTimeout(playSatelliteTock, Math.max(0, waitMs));
+      }, 1000);
+    }
+
+    function stopBeepFusionMode(notifyServer = true) {
+      isBeepFusionActive = false;
+      clearInterval(beepFusionInterval);
+      beepFusionInterval = null;
+      if (fusionOverlay) fusionOverlay.classList.add('hidden');
+
+      if (notifyServer && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop_beep_fusion' }));
+      }
+
+      const displayVal = Number.isInteger(calDelayMs) ? calDelayMs : calDelayMs.toFixed(1);
+      showDeviceToast(`🎯 Calibration Locked: ${calDelayMs > 0 ? '+' : ''}${displayVal}ms`);
+
+      if (lastHostState && lastHostState.isPlaying) {
+        syncToHostState(lastHostState, true);
+      }
+    }
+
+    if (beepFusionBtn) beepFusionBtn.addEventListener('click', () => startBeepFusionMode(true));
+    if (fusionDoneBtn) fusionDoneBtn.addEventListener('click', () => stopBeepFusionMode(true));
+
+    if (fusionLateBtn) fusionLateBtn.addEventListener('click', () => updateCalDelay(calDelayMs + 10));
+    if (fusionEarlyBtn) fusionEarlyBtn.addEventListener('click', () => updateCalDelay(calDelayMs - 10));
+    if (fusionFineMinus2) fusionFineMinus2.addEventListener('click', () => updateCalDelay(calDelayMs - 2));
+    if (fusionFineMinus1) fusionFineMinus1.addEventListener('click', () => updateCalDelay(calDelayMs - 1));
+    if (fusionFineMinusHalf) fusionFineMinusHalf.addEventListener('click', () => updateCalDelay(calDelayMs - 0.5));
+    if (fusionFinePlusHalf) fusionFinePlusHalf.addEventListener('click', () => updateCalDelay(calDelayMs + 0.5));
+    if (fusionFinePlus1) fusionFinePlus1.addEventListener('click', () => updateCalDelay(calDelayMs + 1));
+    if (fusionFinePlus2) fusionFinePlus2.addEventListener('click', () => updateCalDelay(calDelayMs + 2));
+
+    // Initial load for default device profile
+    loadDeviceProfile('speaker', false);
+
+    // Real-Time Progress & Lyrics Sync Loop
+    function onSatelliteTimeUpdate(elem) {
+      if (elem !== activeAudio) return;
+      const cur = elem.currentTime;
+      const dur = elem.duration || currentTrack?.duration || 214;
+      currTimeText.textContent = formatTime(cur);
+      if (dur > 0) seekFill.style.width = `${(cur / dur) * 100}%`;
+
+      // Sync Lyrics
+      if (lyricsArray.length > 0) {
+        let activeIdx = -1;
+        for (let i = 0; i < lyricsArray.length; i++) {
+          if (cur >= lyricsArray[i].time) activeIdx = i;
+          else break;
+        }
+        if (activeIdx !== -1) {
+          lyricPast.textContent = activeIdx > 0 ? (lyricsArray[activeIdx - 1]?.text || '') : '';
+          lyricCurr.textContent = lyricsArray[activeIdx]?.text || '';
+          lyricNext.textContent = activeIdx < lyricsArray.length - 1 ? (lyricsArray[activeIdx + 1]?.text || '') : '';
+        }
+      }
+    }
+
+    if (audioA) audioA.addEventListener('timeupdate', () => onSatelliteTimeUpdate(audioA));
+    if (audioB) audioB.addEventListener('timeupdate', () => onSatelliteTimeUpdate(audioB));
+
+    function formatTime(sec) {
+      if (!isFinite(sec) || sec < 0) return '0:00';
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    connectWs();
+
+    // Satellite Room Switcher & Scanner Logic
+    const satScanQrBtn = document.getElementById('satScanQrBtn');
+    const satEnterCodeBtn = document.getElementById('satEnterCodeBtn');
+    const satShareQrBtn = document.getElementById('satShareQrBtn');
+    const satRoomModal = document.getElementById('satRoomModal');
+    const satModalTitle = document.getElementById('satModalTitle');
+    const satModalCloseBtn = document.getElementById('satModalCloseBtn');
+    const satTabScanner = document.getElementById('satTabScanner');
+    const satTabEnterCode = document.getElementById('satTabEnterCode');
+    const satTabShowQr = document.getElementById('satTabShowQr');
+    const satVideo = document.getElementById('satVideo');
+    const satCanvas = document.getElementById('satCanvas');
+    const satScanStatus = document.getElementById('satScanStatus');
+    const satUploadQrInput = document.getElementById('satUploadQrInput');
+    const satManualCodeInput = document.getElementById('satManualCodeInput');
+    const satSubmitCodeBtn = document.getElementById('satSubmitCodeBtn');
+    const satQrImg = document.getElementById('satQrImg');
+    const satShareUrlInput = document.getElementById('satShareUrlInput');
+    const satCopyShareBtn = document.getElementById('satCopyShareBtn');
+
+    let satCameraStream = null;
+    let satCameraAnimId = null;
+
+    function openSatModal(tabName) {
+      if (!satRoomModal) return;
+      satRoomModal.classList.remove('hidden');
+      satTabScanner.classList.add('hidden');
+      satTabEnterCode.classList.add('hidden');
+      satTabShowQr.classList.add('hidden');
+      stopSatScanner();
+
+      if (tabName === 'scanner') {
+        satModalTitle.textContent = '📷 Scan Host QR Code';
+        satTabScanner.classList.remove('hidden');
+        startSatScanner();
+      } else if (tabName === 'code') {
+        satModalTitle.textContent = '🔢 Enter Room Passcode';
+        satTabEnterCode.classList.remove('hidden');
+        if (satManualCodeInput) {
+          satManualCodeInput.value = (roomId || '').replace(/^DEFAULT$/, '');
+          satManualCodeInput.focus();
+        }
+      } else if (tabName === 'qr') {
+        satModalTitle.textContent = '📲 Room QR Code';
+        satTabShowQr.classList.remove('hidden');
+        loadSatRoomQr();
+      }
+    }
+
+    function closeSatModal() {
+      if (satRoomModal) satRoomModal.classList.add('hidden');
+      stopSatScanner();
+    }
+
+    if (satModalCloseBtn) satModalCloseBtn.addEventListener('click', closeSatModal);
+    if (satRoomModal) {
+      satRoomModal.addEventListener('click', (e) => {
+        if (e.target === satRoomModal) closeSatModal();
+      });
+    }
+
+    if (satScanQrBtn) satScanQrBtn.addEventListener('click', () => openSatModal('scanner'));
+    if (satEnterCodeBtn) satEnterCodeBtn.addEventListener('click', () => openSatModal('code'));
+    if (satShareQrBtn) satShareQrBtn.addEventListener('click', () => openSatModal('qr'));
+
+    async function loadSatRoomQr() {
+      const shareUrl = window.location.href;
+      if (satShareUrlInput) satShareUrlInput.value = shareUrl;
+      try {
+        const resp = await fetch(`/api/generate-qr?text=${encodeURIComponent(shareUrl)}`, {
+          headers: { 'Bypass-Tunnel-Reminder': 'true' }
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.qrDataUrl && satQrImg) {
+            satQrImg.src = data.qrDataUrl;
+          }
+        }
+      } catch (e) {
+        if (satQrImg) satQrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(shareUrl)}`;
+      }
+    }
+
+    if (satCopyShareBtn) {
+      satCopyShareBtn.addEventListener('click', async () => {
+        const url = satShareUrlInput ? satShareUrlInput.value : window.location.href;
+        try {
+          await navigator.clipboard.writeText(url);
+          satCopyShareBtn.textContent = '✅ Copied!';
+          setTimeout(() => { satCopyShareBtn.textContent = '📋 Copy Link'; }, 2000);
+        } catch (e) {
+          alert('Room link: ' + url);
+        }
+      });
+    }
+
+    function handleSatCodeFound(rawText) {
+      if (!rawText) return;
+      const trimmed = rawText.trim();
+      let targetCode = '';
+      const match = trimmed.match(/\/room\/([a-zA-Z0-9_-]+)/i);
+      if (match && match[1]) {
+        targetCode = match[1];
+      } else if (/^[a-zA-Z0-9_-]{3,12}$/.test(trimmed)) {
+        targetCode = trimmed;
+      }
+
+      if (targetCode) {
+        closeSatModal();
+        if (window.location.pathname.startsWith('/room/')) {
+          window.location.href = `/room/${targetCode}`;
+        } else {
+          window.location.search = `?room=${targetCode}`;
+        }
+      }
+    }
+
+    async function startSatScanner() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        if (satScanStatus) satScanStatus.textContent = 'Camera not supported in this browser';
+        return;
+      }
+      try {
+        if (satScanStatus) satScanStatus.textContent = 'Requesting camera access...';
+        satCameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
+        });
+        if (satVideo) {
+          satVideo.srcObject = satCameraStream;
+          satVideo.setAttribute('playsinline', 'true');
+          await satVideo.play();
+          if (satScanStatus) satScanStatus.textContent = 'Scanning for Room QR Code...';
+          requestAnimationFrame(tickSatScan);
+        }
+      } catch (err) {
+        console.error('Camera open failed:', err);
+        if (satScanStatus) satScanStatus.textContent = 'Camera permission denied or camera in use';
+      }
+    }
+
+    function stopSatScanner() {
+      if (satCameraAnimId) {
+        cancelAnimationFrame(satCameraAnimId);
+        satCameraAnimId = null;
+      }
+      if (satCameraStream) {
+        satCameraStream.getTracks().forEach(t => t.stop());
+        satCameraStream = null;
+      }
+      if (satVideo) {
+        satVideo.srcObject = null;
+      }
+    }
+
+    let satBarcodeDetector = null;
+    if ('BarcodeDetector' in window) {
+      try { satBarcodeDetector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) {}
+    }
+
+    async function tickSatScan() {
+      if (!satCameraStream || !satVideo || !satCanvas) return;
+      if (satVideo.readyState === satVideo.HAVE_ENOUGH_DATA) {
+        if (satBarcodeDetector) {
+          try {
+            const barcodes = await satBarcodeDetector.detect(satVideo);
+            if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+              handleSatCodeFound(barcodes[0].rawValue);
+              return;
+            }
+          } catch (detErr) {}
+        }
+
+        const canvas = satCanvas;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const maxDim = 480;
+        const scale = Math.min(1, maxDim / Math.max(satVideo.videoWidth, satVideo.videoHeight, 1));
+        const w = Math.round(satVideo.videoWidth * scale);
+        const h = Math.round(satVideo.videoHeight * scale);
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(satVideo, 0, 0, w, h);
+
+        if (typeof jsQR !== 'undefined') {
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const res = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
+          if (res && res.data) {
+            handleSatCodeFound(res.data);
+            return;
+          }
+        }
+      }
+      satCameraAnimId = requestAnimationFrame(tickSatScan);
+    }
+
+    if (satUploadQrInput) {
+      satUploadQrInput.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = satCanvas || document.createElement('canvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            if (typeof jsQR !== 'undefined') {
+              const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const res = jsQR(imgData.data, imgData.width, imgData.height);
+              if (res && res.data) {
+                handleSatCodeFound(res.data);
+              } else {
+                alert('No QR code detected in the selected image.');
+              }
+            }
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    if (satSubmitCodeBtn && satManualCodeInput) {
+      const submitCode = () => {
+        const code = satManualCodeInput.value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+        if (!code || code.length < 3) {
+          alert('Please enter a valid 6-digit room code');
+          return;
+        }
+        closeSatModal();
+        if (window.location.pathname.startsWith('/room/')) {
+          window.location.href = `/room/${code}`;
+        } else {
+          window.location.search = `?room=${code}`;
+        }
+      };
+      satSubmitCodeBtn.addEventListener('click', submitCode);
+      satManualCodeInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submitCode();
+      });
+    }
+  </script>
+
+  <!-- Satellite Room Dialog Modal (Scan QR, Switch Room, Show Room QR) -->
+  <div class="sat-modal-backdrop hidden" id="satRoomModal">
+    <div class="sat-modal-card">
+      <div class="sat-modal-header">
+        <h3 id="satModalTitle">Room Actions</h3>
+        <button class="sat-modal-close" id="satModalCloseBtn">✕</button>
+      </div>
+
+      <div class="sat-modal-body">
+        <!-- Tab View 1: Camera Scanner -->
+        <div class="sat-modal-tab-content" id="satTabScanner">
+          <div class="sat-scanner-box">
+            <video id="satVideo" class="sat-scanner-video" playsinline></video>
+            <canvas id="satCanvas" style="display:none;"></canvas>
+            <div class="sat-scanner-reticle">
+              <div class="sat-scanner-laser"></div>
+            </div>
+            <div class="sat-scan-status" id="satScanStatus">Point camera at Host QR Code</div>
+          </div>
+          <div class="sat-modal-btn-row">
+            <label class="sat-secondary-btn" for="satUploadQrInput">
+              📁 Scan from Image File
+              <input type="file" id="satUploadQrInput" accept="image/*" style="display:none;">
+            </label>
+          </div>
+        </div>
+
+        <!-- Tab View 2: Direct 6-Digit Code Entry -->
+        <div class="sat-modal-tab-content hidden" id="satTabEnterCode">
+          <p class="sat-modal-desc">Enter the 6-digit room code displayed on the host screen:</p>
+          <div class="sat-code-input-wrap">
+            <input type="text" id="satManualCodeInput" class="sat-code-input" maxlength="12" placeholder="849201" autocomplete="off" spellcheck="false">
+            <button class="sat-primary-btn" id="satSubmitCodeBtn">Connect to Room</button>
+          </div>
+        </div>
+
+        <!-- Tab View 3: Show Room QR Code -->
+        <div class="sat-modal-tab-content hidden" id="satTabShowQr">
+          <p class="sat-modal-desc">Share this room with friends nearby:</p>
+          <div class="sat-qr-display-box">
+            <img id="satQrImg" class="sat-qr-img" src="" alt="Room QR Code">
+          </div>
+          <div class="sat-copy-row">
+            <input type="text" id="satShareUrlInput" class="sat-share-input" readonly>
+            <button class="sat-secondary-btn" id="satCopyShareBtn">📋 Copy Link</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/jsQR.js"></script>
+</body>
+</html>

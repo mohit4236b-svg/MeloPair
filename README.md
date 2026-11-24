@@ -50,4 +50,3 @@ npx electron-builder --win --x64
 ## License
 
 MeloPair is distributed under the MIT License. Bundled third-party binaries retain their respective licenses in the installer resources.
-

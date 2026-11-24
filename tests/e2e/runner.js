@@ -78,7 +78,7 @@ const stats = {
   failed: 0,
   tiers: {
     1: { name: 'Tier 1 (Feature Coverage)', passed: 0, failed: 0, expected: 27 },
-    2: { name: 'Tier 2 (Boundary & Corner Cases)', passed: 0, failed: 0, expected: 25 },
+    2: { name: 'Tier 2 (Boundary & Corner Cases)', passed: 0, failed: 0, expected: 27 },
     3: { name: 'Tier 3 (Cross-Feature Pairwise)', passed: 0, failed: 0, expected: 12 },
     4: { name: 'Tier 4 (Application Scenarios)', passed: 0, failed: 0, expected: 6 }
   },

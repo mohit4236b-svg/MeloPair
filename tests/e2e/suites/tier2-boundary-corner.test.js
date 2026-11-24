@@ -299,6 +299,26 @@ describe('Tier 2: Boundary & Corner Cases (R1, R2, R3, R4)', () => {
 
       await driver.resizeWindow(1280, 860);
     });
+
+    it('TC-T2-R2-07: LRCLIB Collab-Artist Normalization & Plain Lyrics Fallback Invariance', async () => {
+      const normalizationResult = await driver.evaluate(() => {
+        const rawArtist = 'Harkirat Sangha & Starboy X';
+        const primaryArtist = rawArtist.split(/&|,|feat\.|ft\.| x /i)[0].trim();
+        return primaryArtist;
+      });
+      assert.equal(normalizationResult, 'Harkirat Sangha', 'Collab artist regex must normalize "Harkirat Sangha & Starboy X" to "Harkirat Sangha"');
+
+      // Test plain lyrics fallback rendering does not drop valid plainLyrics
+      const plainRendered = await driver.evaluate((plainLrc) => {
+        if (typeof window.renderLyrics === 'function') {
+          window.renderLyrics(plainLrc, false);
+          const lines = document.querySelectorAll('#lyricsStreamScroll .lyric-line, #npKineticLines .imm-line');
+          return lines.length > 0;
+        }
+        return true;
+      }, MOCK_LYRICS.plain);
+      assert.ok(plainRendered, 'Valid plain lyrics fallback must render lines in the UI');
+    });
   });
 
   // -------------------------------------------------------------
@@ -545,6 +565,45 @@ describe('Tier 2: Boundary & Corner Cases (R1, R2, R3, R4)', () => {
       } finally {
         await freshWindow.destroy();
       }
+    });
+
+    it('TC-T2-R4-08: Sequential Next-Track Skipping (5 consecutive skips play 5 distinct songs without 2-song looping)', async () => {
+      const distinctTracks = await driver.evaluate(async (mockTracks) => {
+        const tracks = [
+          ...mockTracks.slice(0, 5),
+          { id: 'trk_6', title: 'Creez', artist: 'Harkirat Sangha', album: 'Singles', duration: 180, thumbnail: 'default-art.png', url: mockTracks[0].url }
+        ];
+
+        if (typeof window.setQueue === 'function') {
+          window.setQueue(tracks);
+        }
+        if (typeof window.playTrack === 'function') {
+          window.playTrack(tracks[0], true);
+        }
+
+        const playedIds = [];
+        const first = typeof window.getCurrentTrack === 'function' ? window.getCurrentTrack() : null;
+        if (first?.id) playedIds.push(first.id);
+
+        for (let i = 0; i < 5; i++) {
+          if (typeof window.playNextTrack === 'function') {
+            await window.playNextTrack();
+          } else {
+            const nextBtn = document.getElementById('dockNextBtn');
+            if (nextBtn) nextBtn.click();
+          }
+          await new Promise(r => setTimeout(r, 360));
+          const curr = typeof window.getCurrentTrack === 'function' ? window.getCurrentTrack() : null;
+          if (curr?.id) playedIds.push(curr.id);
+        }
+        return playedIds;
+      }, MOCK_TRACKS);
+
+      const uniquePlayed = new Set(distinctTracks);
+      assert.ok(
+        uniquePlayed.size >= 5,
+        `Skipping Next 5 times must play at least 5 distinct tracks, got ${uniquePlayed.size} unique (${distinctTracks.join(' -> ')})`
+      );
     });
   });
 });

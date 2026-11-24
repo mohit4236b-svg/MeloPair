@@ -11,7 +11,6 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="dependencyStatusPill" class="dependency-status-pill hidden" role="status" aria-live="polite"></div>
   <!-- LUMN Edge / Rim Lighting Engine -->
   <div class="lumn-rim-lighting vivid" id="lumnRimLighting">
     <div class="rim-strip rim-top"></div>
@@ -723,12 +722,19 @@
           <div class="library-container">
             <div class="library-header-row">
               <div>
-                <h2>Offline Library</h2>
-                <p>Downloaded 320kbps MP3 tracks in Music/EchoMusic</p>
+                <h2>Library & Playlists</h2>
+                <p>Downloaded offline tracks & imported streaming playlists</p>
               </div>
               <div class="library-actions">
+                <button class="pill-btn primary-glow-btn" id="openImportPlaylistBtn" title="Import public Spotify or YouTube Music playlist">
+                  <span style="margin-right: 4px;">📥</span> Import Playlist
+                </button>
                 <button class="pill-btn" id="openMusicFolderBtn">Open Music Folder</button>
               </div>
+            </div>
+            <div class="library-playlists-shelf" id="libraryPlaylistsShelf" style="display:none; margin-bottom: 24px;">
+              <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px; color: #fff;">Imported Playlists</h3>
+              <div class="playlists-grid" id="playlistsGrid" style="display: flex; gap: 12px; flex-wrap: wrap;"></div>
             </div>
             <div class="library-list" id="libraryList">
               <div class="empty-state">No offline tracks downloaded yet. Click the download icon on any song!</div>
@@ -1209,6 +1215,12 @@
         <span class="dock-party-icon">🎉</span>
         <span class="dock-party-text">Rooms</span>
         <span class="dock-party-badge hidden" id="dockPartyBadge">0</span>
+      </button>
+
+      <!-- 1-Tap MeloPair Handoff to Phone Button -->
+      <button class="dock-btn dock-handoff-pill hidden" id="dockHandoffBtn" title="Continue on Phone (MeloPair Handoff)">
+        <span class="dock-handoff-icon">📱</span>
+        <span class="dock-handoff-text" id="dockHandoffText">Continue on Phone</span>
       </button>
 
       <!-- Lyrics & Queue Docks -->
@@ -1840,6 +1852,11 @@
                 </button>
                 <button type="button" id="versiSyncRealignBtn" class="versi-pill-btn" title="Realign lyrics to current audio timestamp">↺ Realign</button>
               </div>
+              <div class="versi-ctrl-divider"></div>
+              <button class="versi-ctrl-btn" id="versiShareLyricCardBtn" title="Share 9:16 Lyric Card">
+                <span class="versi-btn-icon">🎨</span>
+                <span class="versi-btn-text">Share Card</span>
+              </button>
             </div>
           </div>
 
@@ -2088,6 +2105,85 @@
       <div class="taste-onboarding-step hidden" id="tasteImportStep"><p class="taste-eyebrow">BRING YOUR MUSIC WITH YOU · STEP 2 OF 2</p><h1>Import your listening taste</h1><p class="taste-onboarding-copy">Bring a playlist or listening-history export from Spotify, YouTube Music, Apple Music, JioSaavn, Wynk, or Gaana. MeloPair reads it locally.</p><div class="mp-import-panel"><label class="mp-file-pick">Choose CSV, JSON, or text file<input id="mpTasteFileInput" type="file" accept=".csv,.json,.txt,application/json,text/csv,text/plain"></label><p class="mp-import-or">or paste songs and artists</p><textarea id="mpTastePaste" rows="5" placeholder="One song or artist per line&#10;Song title - Artist name" aria-label="Paste songs or artists"></textarea><div class="mp-import-actions"><button class="pill-btn" id="mpImportPasteBtn" type="button">Import pasted list</button><span class="mp-import-summary" id="mpImportSummary" aria-live="polite"></span></div></div><p class="taste-onboarding-status" id="tasteImportStatus" aria-live="polite"></p><div class="mp-wizard-actions"><button class="pill-btn sub" id="mpImportBackBtn" type="button">Back</button><button class="taste-primary-btn" id="mpFinishOnboardingBtn" type="button">Finish setup</button></div><p class="taste-privacy-note">You can import more later in Settings. Your files stay on this device.</p></div>
     </div>
   </section>
+
+  <!-- ====================================================================
+       1-TAP PUBLIC PLAYLIST URL IMPORTER MODAL
+       ==================================================================== -->
+  <div class="party-modal-backdrop hidden" id="playlistImportModalBackdrop">
+    <div class="party-modal" style="max-width: 520px;">
+      <div class="party-modal-header">
+        <div class="party-header-left">
+          <div class="party-icon-glow">📥</div>
+          <div>
+            <h3>Import Playlist</h3>
+            <p class="party-subtitle">Paste a public Spotify or YouTube Music playlist link</p>
+          </div>
+        </div>
+        <button class="modal-close-btn" id="closePlaylistImportModalBtn" title="Close">×</button>
+      </div>
+
+      <div class="party-modal-body" style="padding: 24px;">
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; font-size: 12px; font-weight: 600; color: #a1a1aa; margin-bottom: 8px;">Public Playlist URL</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="playlistUrlInput" placeholder="https://open.spotify.com/playlist/... or https://music.youtube.com/playlist?list=..." style="flex: 1; height: 42px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.12); color: #fff; padding: 0 14px; font-size: 13px; outline: none;">
+            <button class="pill-btn primary-glow-btn" id="startPlaylistImportBtn" type="button" style="height: 42px; padding: 0 18px; font-weight: 700;">Import</button>
+          </div>
+        </div>
+
+        <div id="playlistImportProgressWrap" class="hidden" style="margin-top: 18px;">
+          <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: #e4e4e7; margin-bottom: 6px;">
+            <span id="playlistImportStatusText">Resolving playlist...</span>
+            <span id="playlistImportCountText" style="font-family: monospace;">0 / 0</span>
+          </div>
+          <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden;">
+            <div id="playlistImportProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #fa2d48, #38bdf8); transition: width 0.25s ease;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       1-TAP 9:16 KINETIC LYRIC CARD EXPORT MODAL
+       ==================================================================== -->
+  <div class="party-modal-backdrop hidden" id="lyricCardModalBackdrop">
+    <div class="party-modal" style="max-width: 840px; max-height: 90vh; display: flex; flex-direction: column;">
+      <div class="party-modal-header">
+        <div class="party-header-left">
+          <div class="party-icon-glow">🎨</div>
+          <div>
+            <h3>Share 9:16 Lyric Card</h3>
+            <p class="party-subtitle">Select 1 to 4 lines to export an Instagram / WhatsApp Story card</p>
+          </div>
+        </div>
+        <button class="modal-close-btn" id="closeLyricCardModalBtn" title="Close">×</button>
+      </div>
+
+      <div class="party-modal-body" style="padding: 20px; display: flex; gap: 24px; overflow-y: auto; flex: 1;">
+        <!-- Left Column: Line Picker -->
+        <div style="flex: 1; display: flex; flex-direction: column; min-width: 260px;">
+          <span style="font-size: 12px; font-weight: 700; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;">Select Lines (Tap to Highlight)</span>
+          <div id="lyricCardLinePicker" style="flex: 1; overflow-y: auto; min-height: 360px; max-height: 520px; display: flex; flex-direction: column; gap: 8px; padding-right: 6px;">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Right Column: 9:16 Live Preview & Action -->
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
+          <div style="position: relative; width: 270px; height: 480px; border-radius: 20px; overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,0.6); border: 1px solid rgba(255, 255, 255, 0.12);">
+            <canvas id="lyricCardPreviewCanvas" width="1080" height="1920" style="width: 100%; height: 100%; object-fit: contain;"></canvas>
+          </div>
+
+          <div style="margin-top: 16px; width: 100%; display: flex; justify-content: center;">
+            <button class="pill-btn primary-glow-btn" id="exportLyricCardBtn" style="padding: 10px 24px; font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+              <span>💾</span> Export 9:16 PNG
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <section class="mp-tour-overlay hidden" id="mpFeatureTour" aria-modal="true" role="dialog" aria-label="MeloPair feature tour"><div class="mp-tour-spotlight" id="mpTourSpotlight"></div><article class="mp-tour-card" id="mpTourCard"><p class="taste-eyebrow" id="mpTourStepLabel">STEP 1 OF 6</p><h2 id="mpTourTitle"></h2><p id="mpTourCopy"></p><div class="mp-tour-actions"><button class="pill-btn sub" id="mpTourBackBtn" type="button">Back</button><button class="taste-primary-btn" id="mpTourNextBtn" type="button">Next</button><button class="mp-skip-link" id="mpTourSkipBtn" type="button">Finish</button></div></article></section>
 

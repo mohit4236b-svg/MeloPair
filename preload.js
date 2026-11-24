@@ -2,15 +2,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('echoApi', {
   searchMusic: (query) => ipcRenderer.invoke('search-music', query),
+  getSearchSuggestions: (query) => ipcRenderer.invoke('get-search-suggestions', query),
   getStreamUrl: (track) => ipcRenderer.invoke('get-stream-url', track),
   getRelatedTracks: (data) => ipcRenderer.invoke('get-related-tracks', data),
   getLyrics: (data) => ipcRenderer.invoke('get-lyrics', data),
   downloadTrack: (data) => ipcRenderer.invoke('download-track', data),
-  onDependencyStatus: (cb) => {
-    const listener = (_event, data) => cb(data);
-    ipcRenderer.on('dependency-status', listener);
-    return () => ipcRenderer.removeListener('dependency-status', listener);
-  },
   openDownloadDir: () => ipcRenderer.invoke('open-download-dir'),
   clearCache: () => ipcRenderer.invoke('clear-cache'),
   onDownloadProgress: (cb) => {
@@ -54,5 +50,7 @@ contextBridge.exposeInMainWorld('echoApi', {
   },
   onBeepFusionStop: (cb) => {
     ipcRenderer.on('beep-fusion-stop', () => cb());
-  }
+  },
+  importPlaylistMetadata: (url) => ipcRenderer.invoke('import-playlist-metadata', url),
+  exportLyricCard: (dataUrl, fileName) => ipcRenderer.invoke('export-lyric-card', { dataUrl, fileName })
 });

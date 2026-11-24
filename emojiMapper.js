@@ -23,123 +23,172 @@
 
   // Exact Multi-Language Dictionary specified for Versi Kinetic Lyrics Engine
   const EMOJI_DICTIONARY = [
-    // 1. Home / Room / Space
-    {
-      keywords: ['vacuum', 'cleaner', 'house', 'home', 'room', 'ghar', 'kamra', 'घर', 'कमरा', 'मकान'],
-      emoji: '🏠'
-    },
-    // 2. Car / Road / Travel
-    {
-      keywords: ['car', 'ford', 'drive', 'ride', 'road', 'highway', 'gaadi', 'gaddi', 'sadak', 'गाड़ी', 'सड़क', 'कार'],
-      emoji: '🚗'
-    },
-    // 3. Clothing / Fashion
-    {
-      keywords: ['shirt', 'blouse', 'dress', 'coat', 'sweater', 'kapde', 'kurta', 'कपड़े', 'कुर्ता'],
-      emoji: '👕'
-    },
-    // 4. Coffee / Tea
-    {
-      keywords: ['coffee', 'hot', 'tea', 'cup', 'chai', 'चाय', 'कॉफ़ी'],
-      emoji: '☕'
-    },
-    // 5. Love / Heart / Romance
+    // 1. Broken Heart / Separation / Breakup
     {
       keywords: [
-        'love', 'loved', 'loving', 'heart', 'wanna', 'yours', 'baby', 'babe', 'babydoll', 'kiss',
-        'sweetheart', 'darling', 'pyaar', 'pyar', 'ishq', 'mohabbat', 'dil', 'jaan', 'sohniye',
-        'प्यार', 'इश्क़', 'दिल', 'जान', 'मोहब्बत', 'सोनिया', 'ਸੋਹਣੀਏ', 'ਸੋਹਣੀ', 'ਪਿਆਰ', 'ਦਿਲ', 'ਜਾਨ', 'ਇਸ਼ਕ'
+        'broken', 'heartbreak', 'heartbroken', 'toot', 'tuta', 'tut', 'tutgi', 'tutiya',
+        'ਟੁੱਟ', 'ਟੁੱਟਿਆ', 'ਟੁੱਟਗੀ', 'ਟੁੱਟੇ', 'ਟੁੱਟਾ', 'ਟੁਟਿਆ', 'ਟੁਟਗੀ',
+        'टूट', 'टूटा', 'टूटी', 'टूटते'
+      ],
+      emoji: '💔'
+    },
+    // 2. Love / Romance
+    {
+      keywords: [
+        'pyar', 'pyaar', 'love', 'ishq', 'mohabbat',
+        'ਪਿਆਰ', 'प्यार', 'ਇਸ਼ਕ', 'मोहब्बत'
+      ],
+      emoji: '💘'
+    },
+    // 3. Heart / Soul / Life
+    {
+      keywords: [
+        'heart', 'dil', 'jaan', 'wanna', 'yours', 'baby', 'babe', 'babydoll', 'kiss',
+        'sweetheart', 'darling', 'sohniye',
+        'ਦਿਲ', 'ਜਾਨ', 'ਸੋਹਣੀਏ', 'ਸੋਹਣੀ', 'दिल', 'जान', 'सोनिया'
       ],
       emoji: '❤️'
     },
-    // 6. Breath / Wind / Air
-    {
-      keywords: ['breathin', 'breathe', 'dust', 'air', 'wind', 'hawa', 'saans', 'हवा', 'साँस', 'सांस'],
-      emoji: '💨'
-    },
-    // 7. Rain / Tears / Sadness / Pain
+    // 4. Fire / Flame / Burn / Passion
     {
       keywords: [
-        'rust', 'rain', 'tears', 'cry', 'sad', 'pain', 'baarish', 'barsaat', 'aansu', 'dard', 'rona',
-        'बारिश', 'आँसू', 'दर्द', 'रोना', 'बरसात'
+        'fire', 'burn', 'flame', 'aag', 'junoon', 'jalna',
+        'ਅੱਗ', 'ਅੱਗਾਂ', 'ਜਨੂਨ', 'ਜਲਨਾ', 'आग', 'जुनून', 'जलना'
       ],
-      emoji: '🌧️'
+      emoji: '🔥'
     },
-    // 8. Secrets / Mind / Dreams / Thoughts
-    {
-      keywords: [
-        'secrets', 'mind', 'think', 'thought', 'dream', 'head', 'khwab', 'sapna', 'soch',
-        'सोचा', 'ख्वाब', 'सपना', 'सोच'
-      ],
-      emoji: '💭'
-    },
-    // 9. Eyes / Sight / Vision
-    {
-      keywords: [
-        'eyes', 'eye', 'see', 'look', 'watch', 'aankh', 'aankhein', 'aankhen', 'nazar', 'naina',
-        'आँखें', 'आँख', 'नज़र', 'नयना', 'नयन'
-      ],
-      emoji: '👀'
-    },
-    // 10. Night / Moon / Stars / Sky
+    // 5. Night / Moon / Sky / Stars
     {
       keywords: [
         'night', 'moon', 'star', 'stars', 'sky', 'dark', 'raat', 'chaand', 'chand', 'sitare', 'aasmaan',
-        'रात', 'चाँद', 'तारे', 'सितारे', 'आसमान'
+        'ਰਾਤ', 'ਚੰਦ', 'ਤਾਰੇ', 'ਅਸਮਾਨ', 'रात', 'चाँद', 'तारे', 'सितारे', 'आसमान'
       ],
       emoji: '🌙'
     },
-    // 11. Sun / Morning / Light
+    // 6. King / Crown / Boss / Pride
     {
-      keywords: ['sun', 'morning', 'light', 'shine', 'subah', 'dhoop', 'roshni', 'सूरज', 'रोशनी', 'धूप', 'सुबह'],
-      emoji: '✨'
+      keywords: [
+        'king', 'crown', 'queen', 'boss', 'badshah', 'hukum', 'sher', 'rani', 'raja',
+        'ਤਾਜ', 'ਸ਼ੇਰ', 'ਰਾਜਾ', 'ਰਾਣੀ', 'ਜਿੱਤ', 'ਜਿੱਤਾਂ', 'राजा', 'रानी', 'बादशाह', 'ताज', 'शेर'
+      ],
+      emoji: '👑'
     },
-    // 12. Fire / Burn / Flame
+    // 7. Time / Clock / Waiting
     {
-      keywords: ['fire', 'burn', 'flame', 'aag', 'junoon', 'jalna', 'आग', 'जुनून', 'जलना'],
-      emoji: '🔥'
-    },
-    // 13. Dance / Move / Party
-    {
-      keywords: ['dance', 'move', 'groove', 'party', 'nach', 'nachna', 'bhangra', 'नाच', 'डांस', 'भांगड़ा'],
-      emoji: '💃'
-    },
-    // 14. Music / Song / Sing / Beat
-    {
-      keywords: ['music', 'song', 'sing', 'beat', 'rhythm', 'gaana', 'geet', 'dhun', 'संगीत', 'गाना', 'गीत', 'धुन'],
-      emoji: '🎶'
-    },
-    // 15. Time / Wait / Clock
-    {
-      keywords: ['time', 'wait', 'clock', 'forever', 'waqt', 'pal', 'lamha', 'ghadi', 'deir', 'intezaar', 'इंतज़ार', 'वक्त', 'पल', 'लम्हा'],
+      keywords: [
+        'time', 'wait', 'clock', 'forever', 'waqt', 'samay', 'pal', 'lamha', 'ghadi', 'deir', 'intezaar',
+        'ਸਮਾਂ', 'ਵਕਤ', 'ਪਲ', 'ਲੰਘਿਆ', 'ਇੰਤਜ਼ਾਰ', 'समय', 'वक्त', 'वक़्त', 'पल', 'लम्हा', 'इंतज़ार'
+      ],
       emoji: '⏳'
     },
-    // 16. Phone / Call / Talking
+    // 8. Eyes / Sight / Vision
     {
       keywords: [
-        'phone', 'call', 'calling', 'ring', 'ringing', 'dial', 'number', 'fone', 'phon',
-        'hello', 'talk', 'gal', 'baat', 'bol', 'bolna', 'sun', 'suno', 'awaaz', 'कॉल', 'बात', 'फोन', 'फ़ोन'
+        'eyes', 'eye', 'see', 'look', 'watch', 'aankh', 'aankhein', 'aankhen', 'nazar', 'naina', 'akh', 'akhan',
+        'ਅੱਖ', 'ਅੱਖਾਂ', 'ਆਖ', 'नज़र', 'आँखें', 'आँख', 'आंख', 'नयना', 'नयन'
       ],
-      emoji: '📱'
+      emoji: '👀'
     },
-    // 17. Money / Wealth / Cash
+    // 9. Home / Village / House
     {
       keywords: [
-        'money', 'cash', 'rich', 'dollar', 'dollars', 'paisa', 'paise', 'crore', 'lakh',
-        'daulat', 'kuttda', 'kamm', 'bills', 'paid', 'rupiye', 'rupaye', 'पैसा', 'पैसे', 'रुपया'
+        'home', 'house', 'room', 'pind', 'village', 'ghar', 'kamra', 'vacuum', 'cleaner',
+        'ਪਿੰਡ', 'ਪਿੰਡਾਂ', 'ਘਰ', 'ਕਮਰਾ', 'घर', 'कमरा', 'मकान', 'गांव', 'गाँव'
+      ],
+      emoji: '🏡'
+    },
+    // 10. Car / Vehicle / Road / Travel
+    {
+      keywords: [
+        'car', 'drive', 'ride', 'road', 'highway', 'ford', 'gaadi', 'gaddi', 'sadak',
+        'ਗੱਡੀ', 'ਸੜਕ', 'ਕਾਰ', 'गाड़ी', 'सड़क', 'कार'
+      ],
+      emoji: '🚘'
+    },
+    // 11. Money / Wealth / Cash
+    {
+      keywords: [
+        'money', 'cash', 'rich', 'dollar', 'dollars', 'paisa', 'paise', 'crore', 'lakh', 'daulat', 'rupaye',
+        'ਪੈਸਾ', 'ਪੈਸੇ', 'ਦੌਲਤ', 'ਕਰੋੜ', 'पैसा', 'पैसे', 'रुपया', 'दौलत'
       ],
       emoji: '💸'
     },
-    // 18. Guns / Weapons / Street Power
+    // 12. God / Blessing / Faith / Prayer
     {
       keywords: [
-        'asle', 'asla', 'gun', 'guns', 'shot', 'bullet', 'bullets', 'shoot', 'fire',
+        'god', 'rab', 'rabb', 'babe', 'baba', 'waheguru', 'bhagwan', 'bless', 'prayer', 'dua',
+        'ਰੱਬ', 'ਰੱਬਾ', 'ਬਾਬੇ', 'ਬਾਬਾ', 'ਵਾਹਿਗੁਰੂ', 'भगवान', 'रब', 'दुआ', 'प्रार्थना'
+      ],
+      emoji: '🙏'
+    },
+    // 13. Music / Song / Melody / Beat
+    {
+      keywords: [
+        'music', 'song', 'sing', 'beat', 'rhythm', 'gaana', 'geet', 'dhun', 'sangeet',
+        'ਸੰਗੀਤ', 'ਗੀਤ', 'ਗਾਣਾ', 'ਧੁਨ', 'संगीत', 'गाना', 'गीत', 'धुन'
+      ],
+      emoji: '🎵'
+    },
+    // 14. Clothing / Fashion
+    {
+      keywords: ['shirt', 'blouse', 'dress', 'coat', 'sweater', 'kapde', 'kurta', 'ਕੱਪੜੇ', 'ਕੁੜਤਾ', 'कपड़े', 'कुर्ता'],
+      emoji: '👕'
+    },
+    // 15. Coffee / Tea
+    {
+      keywords: ['coffee', 'hot', 'tea', 'cup', 'chai', 'ਚਾਹ', 'चाय', 'कॉफ़ी'],
+      emoji: '☕'
+    },
+    // 16. Breath / Wind / Air
+    {
+      keywords: ['breathin', 'breathe', 'dust', 'air', 'wind', 'hawa', 'saans', 'ਹਵਾ', 'ਸਾਹ', 'हवा', 'साँस', 'सांस'],
+      emoji: '💨'
+    },
+    // 17. Rain / Tears / Sadness
+    {
+      keywords: [
+        'rust', 'rain', 'tears', 'cry', 'sad', 'pain', 'baarish', 'barsaat', 'aansu', 'dard', 'rona',
+        'ਮੀਂਹ', 'ਅੱਥਰੂ', 'ਦਰਦ', 'ਰੋਣਾ', 'बारिश', 'आँसू', 'दर्द', 'रोना', 'बरसात'
+      ],
+      emoji: '🌧️'
+    },
+    // 18. Secrets / Mind / Dreams / Thoughts
+    {
+      keywords: [
+        'secrets', 'mind', 'think', 'thought', 'dream', 'head', 'khwab', 'sapna', 'soch',
+        'ਸੋਚ', 'ਸੁਪਨਾ', 'ਖ਼ਵਾਬ', 'सोचा', 'ख्वाब', 'सपना', 'सोच'
+      ],
+      emoji: '💭'
+    },
+    // 19. Sun / Morning / Light
+    {
+      keywords: ['sun', 'morning', 'light', 'shine', 'subah', 'dhoop', 'roshni', 'ਸੂਰਜ', 'ਰੋਸ਼ਨੀ', 'ਸਵੇਰ', 'सूरज', 'रोशनी', 'धूप', 'सुबह'],
+      emoji: '✨'
+    },
+    // 20. Dance / Move / Party
+    {
+      keywords: ['dance', 'move', 'groove', 'party', 'nach', 'nachna', 'bhangra', 'ਨੱਚ', 'ਭੰਗੜਾ', 'ਨਾਚ', 'डांस', 'भांगड़ा'],
+      emoji: '💃'
+    },
+    // 21. Phone / Call / Talking
+    {
+      keywords: [
+        'phone', 'call', 'calling', 'ring', 'ringing', 'dial', 'number', 'fone', 'phon',
+        'hello', 'talk', 'gal', 'baat', 'bol', 'bolna', 'sun', 'suno', 'awaaz',
+        'ਗੱਲ', 'ਬੋਲ', 'ਸੁਣ', 'ਆਵਾਜ਼', 'कॉल', 'बात', 'फोन', 'फ़ोन'
+      ],
+      emoji: '📱'
+    },
+    // 22. Guns / Weapons / Street Power
+    {
+      keywords: [
+        'asle', 'asla', 'gun', 'guns', 'shot', 'bullet', 'bullets', 'shoot',
         'rifle', 'pistol', 'bandook', 'goli', 'raund', 'hathyar', 'gang', 'jatt', 'dabka', 'shonk', 'bandookan',
         'ਸ਼ੌਂਕ', 'ਸ਼ੌਂਕੀ', 'ਅਸਲਾ', 'ਬੰਦੂਕ', 'ਜੱਟ', 'ਹਥਿਆਰ'
       ],
       emoji: '🔫'
     },
-    // 19. Friends / Brotherhood / Mother / Family
+    // 23. Friends / Brotherhood / Mother / Family
     {
       keywords: [
         'bebe', 'maa', 'mom', 'mother', 'baapu', 'papa', 'dad', 'family',
@@ -148,22 +197,15 @@
       ],
       emoji: '🫂'
     },
-    // 20. Queen / King / Crown / Boss / Beauty
+    // 24. Drink / Cheers / Party
     {
       keywords: [
-        'goriye', 'kudi', 'kudiye', 'queen', 'king', 'crown', 'boss', 'badshah', 'hukum', 'rani', 'raja',
-        'ਗੋਰੀਏ', 'ਕੁੜੀ', 'ਰਾਣੀ', 'ਰਾਜਾ', 'ਜਿੱਤ', 'ਜਿੱਤਾਂ'
-      ],
-      emoji: '👑'
-    },
-    // 21. Drink / Cheers / Party
-    {
-      keywords: [
-        'drink', 'drinks', 'peg', 'daru', 'daaru', 'wine', 'beer', 'sharab', 'bottle', 'glass', 'cheers', 'नशा', 'दारू', 'शराब'
+        'drink', 'drinks', 'peg', 'daru', 'daaru', 'wine', 'beer', 'sharab', 'bottle', 'glass', 'cheers',
+        'ਦਾਰੂ', 'ਸ਼ਰਾਬ', 'ਪੈੱਗ', 'नशा', 'दारू', 'शराब'
       ],
       emoji: '🥂'
     },
-    // 22. Vibe / Chill / Calm / Glow
+    // 25. Vibe / Chill / Calm / Glow
     {
       keywords: [
         'vibe', 'chill', 'sukoon', 'magic', 'shining', 'glow', 'easy', 'behave', 'shanti', 'सुकून', 'शांति',
@@ -179,12 +221,13 @@
   /**
    * Unicode-aware word normalization (strips surrounding punctuation, preserves Devanagari & Gurmukhi)
    * NEVER uses \W which strips non-Latin Indic characters!
+   * Always includes \p{M} so vowel signs and combining marks are NEVER stripped!
    */
   function normalizeWord(rawWord) {
     if (!rawWord) return '';
     return rawWord
-      .replace(/^[^\p{L}\p{N}]+/gu, '')
-      .replace(/[^\p{L}\p{N}]+$/gu, '')
+      .replace(/^[^\p{L}\p{M}\p{N}]+/gu, '')
+      .replace(/[^\p{L}\p{M}\p{N}]+$/gu, '')
       .toLowerCase();
   }
 
@@ -313,12 +356,55 @@
     });
   }
 
+  /**
+   * Unicode-safe string line decorator.
+   * Prepends matched emoji with a space before the word, capped at 1-2 emojis per line.
+   * Preserves sentence word order and never mutates or slices inside Indic characters or combining matras.
+   */
+  function decorateLine(text, autoEmoji = true) {
+    if (!text || typeof text !== 'string') return '';
+    if (!autoEmoji) return text;
+
+    try {
+      const rawTokens = text.trim().split(/\s+/).filter(w => w.length > 0);
+      if (rawTokens.length === 0) return text;
+
+      let emojiCount = 0;
+      const maxEmojis = 2;
+      const usedEmojis = new Set();
+      const matchedEmojiForToken = new Map();
+
+      for (let i = 0; i < rawTokens.length; i++) {
+        if (emojiCount >= maxEmojis) break;
+        const emoji = getEmojiForWord(rawTokens[i]);
+        if (emoji && !usedEmojis.has(emoji)) {
+          usedEmojis.add(emoji);
+          matchedEmojiForToken.set(i, emoji);
+          emojiCount++;
+        }
+      }
+
+      if (emojiCount === 0) return text;
+
+      return rawTokens.map((token, idx) => {
+        if (matchedEmojiForToken.has(idx)) {
+          return `${matchedEmojiForToken.get(idx)} ${token}`;
+        }
+        return token;
+      }).join(' ');
+    } catch (err) {
+      console.warn('[EmojiMapper] decorateLine error, falling back to raw text:', err);
+      return text;
+    }
+  }
+
   return {
     getEmojiForWord,
     renderKineticWords,
     processKineticLine,
     normalizeWord,
     isNonLatinText,
+    decorateLine,
     EMOJI_DICTIONARY,
     GUARANTEED_FALLBACK_EMOJIS
   };

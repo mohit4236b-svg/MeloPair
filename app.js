@@ -111,31 +111,8 @@ const isElectron = !isAndroid && Boolean(typeof window !== 'undefined' && window
 
 // Global monotonic request token to enforce "latest request wins" across async operations
 let playRequestId = 0;
-let profileInitializationPromise = Promise.resolve({ showWelcomeWizard: false });
 
 document.addEventListener('DOMContentLoaded', () => {
-  const feedJunkTitlePatterns = [
-    /\btop\s*100\b/i, /\btop\s+hits\b/i, /\bplaylist\b/i, /\bmixtape\b/i,
-    /\bfull\s+album\b/i, /\bnon[\s-]?stop\b/i, /\bjukebox\b/i,
-    /\bmashup\s+mix\b/i, /\bcompilation\b/i, /\bbest\s+of\s+20\b/i,
-    /\bhits\s+20\b/i, /\b1\s*(?:hour|hr)\b/i, /\bhour\s+loop\b/i,
-    /\bslowed\s*\+\s*reverb\b/i
-  ];
-  const musicVideoTitlePattern = /\b(?:official\s+music\s+video|official\s+video|music\s+video|video\s+song|full\s+video|lyrical\s+video|teaser|trailer|jukebox|1\s*hour|mashup)\b/i;
-  const dependencyStatusPill = document.getElementById('dependencyStatusPill');
-  const renderDependencyStatus = status => {
-    if (!dependencyStatusPill || !status) return;
-    if (status.state === 'ready') {
-      dependencyStatusPill.classList.add('hidden');
-      return;
-    }
-    dependencyStatusPill.dataset.state = status.state || 'checking';
-    const progress = Number.isFinite(Number(status.percent)) ? ` ${Math.max(0, Math.min(100, Number(status.percent)))}%` : '';
-    dependencyStatusPill.textContent = `${status.detail || 'Preparing audio engine…'}${status.state === 'downloading' ? progress : ''}`;
-    dependencyStatusPill.classList.remove('hidden');
-  };
-  window.echoApi?.onDependencyStatus?.(renderDependencyStatus);
-
   // Dual Audio Elements for Gapless DJ Crossfade
   const audioA = document.getElementById('audioA');
   const audioB = document.getElementById('audioB');
@@ -148,74 +125,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (audioB) audioB.crossOrigin = 'anonymous';
   }
 
-  const reportAudioSourceFailure = async (deck, deckName) => {
-    if (!deck?.dataset?.trackId) return;
-    const mediaCode = deck.error?.code || 0;
-    console.warn(`[Audio Engine] ${deckName} media error code=${mediaCode}, networkState=${deck.networkState}, readyState=${deck.readyState}, src=${deck.currentSrc || deck.src}`);
-    if (!isElectron || !String(deck.currentSrc || deck.src).includes('/proxy-audio')) return;
-    try {
-      const statusUrl = new URL(`/api/stream-status?id=${encodeURIComponent(deck.dataset.trackId)}`, deck.currentSrc || deck.src);
-      const response = await fetch(statusUrl.href, { headers: { 'Bypass-Tunnel-Reminder': 'true' } });
-      if (!response.ok) return;
-      const status = await response.json();
-      if (status?.reason && deck.dataset.trackId === String(currentTrack?.id)) {
-        showToast(`Audio source error: ${status.reason}`);
-      }
-    } catch (error) {
-      console.debug('[Audio Engine] Could not read local stream diagnostic:', error.message);
-    }
-  };
-
   if (audioA) {
     audioA.volume = 1;
-    audioA.hasFiredPlayingEvent = false;
-    audioA.addEventListener('playing', () => {
-      audioA.hasFiredPlayingEvent = true;
-      restoreActiveDeckOutput(audioA);
-    });
-    audioA.addEventListener('waiting', () => { audioA.hasFiredPlayingEvent = false; });
-    audioA.addEventListener('loadstart', () => { audioA.hasFiredPlayingEvent = false; });
-    audioA.addEventListener('pause', () => { audioA.hasFiredPlayingEvent = false; });
-    audioA.addEventListener('error', () => { void reportAudioSourceFailure(audioA, 'Deck A'); });
     audioA.addEventListener('loadedmetadata', () => {
       console.log(`[DIAG-AUDIO] Deck A loadedmetadata: duration=${audioA.duration}s (${Math.floor(audioA.duration/60)}:${Math.floor(audioA.duration%60)}), src=${audioA.src}`);
-      const isCurrentTrackDeck = Boolean(currentTrack && activeAudio === audioA && audioA.dataset.trackId === String(currentTrack.id));
-      if (isCurrentTrackDeck && Number.isFinite(audioA.duration) && audioA.duration > 0 && !lyricsDataIsSynced && rawPlainLyricsText) {
-        updatePlainLyricsTimestamps(audioA.duration);
-      }
-      if (isCurrentTrackDeck && Number.isFinite(audioA.duration) && audioA.duration > 0 && lyricsDataIsSynced) {
-        applyAutoIntroOffset(audioA.duration);
-      }
-      if (isCurrentTrackDeck && audioA.duration > 10 && (!lyricsDataIsSynced || Math.abs(audioA.duration - lastFetchedLyricsDuration) > 1.0)) {
-        console.log(`[Lyrics] Deck A verified duration=${audioA.duration}s; refreshing lyrics lookup.`);
-        fetchLyrics(currentTrack, audioA.duration);
-      }
     });
   }
   if (audioB) {
     audioB.volume = 1;
-    audioB.hasFiredPlayingEvent = false;
-    audioB.addEventListener('playing', () => {
-      audioB.hasFiredPlayingEvent = true;
-      restoreActiveDeckOutput(audioB);
-    });
-    audioB.addEventListener('waiting', () => { audioB.hasFiredPlayingEvent = false; });
-    audioB.addEventListener('loadstart', () => { audioB.hasFiredPlayingEvent = false; });
-    audioB.addEventListener('pause', () => { audioB.hasFiredPlayingEvent = false; });
-    audioB.addEventListener('error', () => { void reportAudioSourceFailure(audioB, 'Deck B'); });
     audioB.addEventListener('loadedmetadata', () => {
       console.log(`[DIAG-AUDIO] Deck B loadedmetadata: duration=${audioB.duration}s (${Math.floor(audioB.duration/60)}:${Math.floor(audioB.duration%60)}), src=${audioB.src}`);
-      const isCurrentTrackDeck = Boolean(currentTrack && activeAudio === audioB && audioB.dataset.trackId === String(currentTrack.id));
-      if (isCurrentTrackDeck && Number.isFinite(audioB.duration) && audioB.duration > 0 && !lyricsDataIsSynced && rawPlainLyricsText) {
-        updatePlainLyricsTimestamps(audioB.duration);
-      }
-      if (isCurrentTrackDeck && Number.isFinite(audioB.duration) && audioB.duration > 0 && lyricsDataIsSynced) {
-        applyAutoIntroOffset(audioB.duration);
-      }
-      if (isCurrentTrackDeck && audioB.duration > 10 && (!lyricsDataIsSynced || Math.abs(audioB.duration - lastFetchedLyricsDuration) > 1.0)) {
-        console.log(`[Lyrics] Deck B verified duration=${audioB.duration}s; refreshing lyrics lookup.`);
-        fetchLyrics(currentTrack, audioB.duration);
-      }
     });
   }
 
@@ -528,10 +447,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const tasteSetupStatus = document.getElementById('tasteSetupStatus');
   const tasteSignInBtn = document.getElementById('tasteSignInBtn');
   const tasteFinishBtn = document.getElementById('tasteFinishBtn');
-  const tasteImportStep = document.getElementById('tasteImportStep');
-  const mpFeatureTour = document.getElementById('mpFeatureTour');
-  let importedListeningMemory = [];
-  try { importedListeningMemory = JSON.parse(safeStorageGet('melopair_imported_listening_memory') || '[]') || []; } catch { importedListeningMemory = []; }
   let firebaseSignedInUser = null;
   let tastePreferences = {};
   let recommendationCatalog = [];
@@ -601,216 +516,27 @@ document.addEventListener('DOMContentLoaded', () => {
   // App State
   let currentTrack = null;
   let queue = [];
-  let manualQueue = [];
-  let contextQueue = [];
-  let autoplayQueue = [];
-  let currentRadioFilterMode = 'all'; // 'all' | 'familiar' | 'discover'
-  let activeRadioVibeLabel = ''; // e.g. "Hindi Romantic", "Punjabi Hip-Hop", "English Dark R&B"
-  const sessionEarlySkippedArtists = new Set();
-  const sessionPositiveArtists = new Set();
+  let queueIndex = 0;
   const sessionPlayedTrackIds = new Set();
   const sessionPlayedSongKeys = new Set();
   const autoQueueTrackIds = new Set();
+  const playedTrackIds = new Set();
+  const playedTrackHistory = [];
+
+  function markTrackAsPlayed(trackId) {
+    if (!trackId) return;
+    playedTrackIds.add(trackId);
+    sessionPlayedTrackIds.add(trackId);
+    playedTrackHistory.push(trackId);
+    while (playedTrackHistory.length > 30) {
+      const oldest = playedTrackHistory.shift();
+      if (!playedTrackHistory.includes(oldest)) {
+        playedTrackIds.delete(oldest);
+      }
+    }
+  }
   let radioRecommendationRequestId = 0;
   let isAutoplayEnabled = true;
-  const recentArtistHistory = [];
-
-  function rememberRecentArtist(track) {
-    const artist = feedPrimaryArtist(track?.artist);
-    if (!artist) return;
-    recentArtistHistory.push(artist);
-    if (recentArtistHistory.length > 6) recentArtistHistory.splice(0, recentArtistHistory.length - 6);
-  }
-
-  function syncMasterQueue() {
-    const list = [];
-    if (currentTrack) list.push(currentTrack);
-    manualQueue.forEach(t => {
-      if (!list.some(x => x.id === t.id)) {
-        list.push({ ...t, isManualQueue: true, isAutoplaySuggestion: false });
-      }
-    });
-    contextQueue.forEach(t => {
-      if (!list.some(x => x.id === t.id)) {
-        list.push({ ...t, isContextQueue: true, isAutoplaySuggestion: false });
-      }
-    });
-    if (isAutoplayEnabled) {
-      autoplayQueue.forEach(t => {
-        if (!list.some(x => x.id === t.id)) {
-          list.push({ ...t, isAutoplaySuggestion: true });
-        }
-      });
-    }
-    queue = list;
-    window.queue = queue;
-    autoQueueTrackIds.clear();
-    autoplayQueue.forEach(t => autoQueueTrackIds.add(t.id));
-  }
-  window.syncMasterQueue = syncMasterQueue;
-
-  // Lyric timing uses the active audio clock plus the user's per-track nudge.
-  let manualLyricOffset = 0.0;
-  let autoIntroOffset = 0.0;
-  let lastLrcResultDuration = 0;
-  let lastFetchedLyricsDuration = 0;
-  let hasSavedManualLyricOffset = false;
-  let currentSongLyricOffset = 0.0;
-  const DEFAULT_SYNC_LEAD = 0.35;
-
-  // Plain Lyrics Paced Display State
-  let rawPlainLyricsText = null;
-
-  function getLyricOffsetStorageKey(track) {
-    if (!track) return null;
-    const t = String(track.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_');
-    const a = String(track.artist || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_');
-    return `melopair_lyric_offset_${a}_${t}`;
-  }
-
-  function loadLyricOffsetForTrack(track) {
-    const key = getLyricOffsetStorageKey(track);
-    if (!key) {
-      manualLyricOffset = 0.0;
-    } else {
-      const stored = localStorage.getItem(key);
-      const parsed = parseFloat(stored);
-      manualLyricOffset = Number.isFinite(parsed) ? Math.max(-15, Math.min(15, parsed)) : 0.0;
-    }
-    autoIntroOffset = 0.0;
-    lastLrcResultDuration = 0;
-    lastFetchedLyricsDuration = 0;
-    hasSavedManualLyricOffset = Boolean(key && localStorage.getItem(key) !== null);
-    computeTotalLyricOffset();
-  }
-
-  function computeTotalLyricOffset() {
-    const effectiveOffset = hasSavedManualLyricOffset
-      ? manualLyricOffset
-      : (lyricsDataIsSynced ? autoIntroOffset + DEFAULT_SYNC_LEAD : 0);
-    currentSongLyricOffset = Math.round(effectiveOffset * 10) / 10;
-    updateLyricOffsetUI();
-  }
-
-  function realignLyrics(reason = 'auto', forceResetManual = false) {
-    const deck = activeAudio;
-    const trackId = String(currentTrack?.id ?? '');
-    if (!deck || !trackId || deck.dataset?.trackId !== trackId || deck.readyState < 2) return false;
-    const mediaTime = Number(deck.currentTime);
-    if (!Number.isFinite(mediaTime) || mediaTime < 0 || !Array.isArray(lyricsData) || lyricsData.length === 0) return false;
-
-    if (forceResetManual) {
-      const storageKey = getLyricOffsetStorageKey(currentTrack);
-      if (storageKey) localStorage.removeItem(storageKey);
-      manualLyricOffset = 0;
-      hasSavedManualLyricOffset = false;
-      const rawDelta = Number(deck.duration) - Number(lastLrcResultDuration);
-      autoIntroOffset = lyricsDataIsSynced && Number.isFinite(rawDelta) && rawDelta > 3.5 && rawDelta <= 15
-        ? -rawDelta
-        : 0;
-      computeTotalLyricOffset();
-    }
-
-    if (!lyricsDataIsSynced && !plainLyricsCanProgress) {
-      if (forceResetManual) syncLyricsWithTime(mediaTime, true);
-      return true;
-    }
-
-    const effectiveTime = mediaTime + currentSongLyricOffset;
-    let targetIndex = -1;
-    for (let index = 0; index < lyricsData.length; index++) {
-      if (effectiveTime >= Number(lyricsData[index]?.time || 0)) targetIndex = index;
-      else break;
-    }
-
-    const renderedActiveIndex = Number(document.querySelector('#npKineticLines .imm-active')?.getAttribute('data-index'));
-    const activeLineIsRendered = Number.isFinite(renderedActiveIndex) && renderedActiveIndex === targetIndex;
-    if (reason === 'auto' && targetIndex === activeLyricIndex && (activeLineIsRendered || targetIndex < 0)) return true;
-    if (reason === 'auto' && activeLyricIndex >= 0) {
-      const displayedLineTime = Number(lyricsData[activeLyricIndex]?.time);
-      if (Number.isFinite(displayedLineTime) && Math.abs(effectiveTime - displayedLineTime) < 0.25) return true;
-    }
-
-    activeLyricIndex = targetIndex;
-    if (targetIndex < 0) {
-      renderImmersiveLyrics(-1);
-      document.getElementById('npLyricsStream')?.querySelectorAll('.np-lyric-line, .lyrics-line').forEach(line => line.classList.remove('active'));
-      return true;
-    }
-    updateActiveLyricLine(targetIndex);
-    renderImmersiveLyrics(targetIndex);
-    document.getElementById('npLyricsStream')?.querySelectorAll('.np-lyric-line, .lyrics-line').forEach((line, index) => {
-      line.classList.toggle('active', index === targetIndex);
-    });
-    return true;
-  }
-
-  function applyAutoIntroOffset(deckDuration) {
-    const audioDuration = Number(deckDuration);
-    if (!lyricsDataIsSynced || !Number.isFinite(audioDuration) || audioDuration <= 0 || !lastLrcResultDuration) return;
-    if (hasSavedManualLyricOffset) {
-      autoIntroOffset = 0;
-      computeTotalLyricOffset();
-      return;
-    }
-
-    const rawDelta = audioDuration - lastLrcResultDuration;
-    autoIntroOffset = rawDelta > 3.5 && rawDelta <= 15 ? -rawDelta : 0;
-    computeTotalLyricOffset();
-  }
-
-  function saveLyricOffsetForTrack(track, offset) {
-    const key = getLyricOffsetStorageKey(track);
-    if (!key) return;
-    if (Math.abs(offset) < 0.01) {
-      localStorage.removeItem(key);
-    } else {
-      localStorage.setItem(key, offset.toFixed(1));
-    }
-  }
-
-  function updateLyricOffsetUI() {
-    const label = document.getElementById('versiSyncValLabel');
-    const resetBtn = document.getElementById('versiSyncResetBtn');
-    if (label) {
-      const sign = currentSongLyricOffset > 0 ? '+' : '';
-      label.textContent = `${sign}${currentSongLyricOffset.toFixed(1)}s`;
-    }
-    if (resetBtn) {
-      resetBtn.classList.toggle('has-offset', Math.abs(currentSongLyricOffset) >= 0.01);
-    }
-  }
-
-  function adjustLyricOffset(delta) {
-    if (delta === 0) {
-      manualLyricOffset = 0.0;
-      autoIntroOffset = 0.0;
-      hasSavedManualLyricOffset = false;
-      if (currentTrack) {
-        const key = getLyricOffsetStorageKey(currentTrack);
-        if (key) localStorage.removeItem(key);
-      }
-    } else {
-      const adjustmentBase = hasSavedManualLyricOffset
-        ? manualLyricOffset
-        : (lyricsDataIsSynced ? autoIntroOffset + DEFAULT_SYNC_LEAD : 0);
-      manualLyricOffset = Math.max(-15, Math.min(15, Math.round((adjustmentBase + delta) * 10) / 10));
-      hasSavedManualLyricOffset = true;
-      if (currentTrack) {
-        saveLyricOffsetForTrack(currentTrack, manualLyricOffset);
-      }
-    }
-    computeTotalLyricOffset();
-    const curTime = isYtActive && ytPlayer && typeof ytPlayer.getCurrentTime === 'function'
-      ? (ytPlayer.getCurrentTime() || 0)
-      : (activeAudio?.currentTime || 0);
-    if (Number.isFinite(curTime)) {
-      syncLyricsWithTime(curTime, true);
-    }
-  }
-
-  window.adjustLyricOffset = adjustLyricOffset;
-  window.loadLyricOffsetForTrack = loadLyricOffsetForTrack;
   let lastPlayedTrack = null;
   let lastPlayedPosition = 0;
   let lastResumeCheckpoint = 0;
@@ -849,36 +575,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let dockLyricsExpanded = false; // Track lyrics panel expanded state
   let npSyncRaf = 0;
 
-  // Live Lower-Right Audio & Crossfade Status HUD (Apple Frosted Glass)
-  let playbackStatusHideTimeout = null;
-  function setPlaybackStatus(mode, text, autoHideMs = null) {
-    const hud = document.getElementById('playbackStatusHud');
-    const label = document.getElementById('playbackStatusText');
-    if (!hud || !label) return;
-
-    if (playbackStatusHideTimeout) {
-      clearTimeout(playbackStatusHideTimeout);
-      playbackStatusHideTimeout = null;
-    }
-
-    if (mode === 'idle') {
-      hud.classList.remove('visible', 'is-buffering', 'is-crossfading', 'is-playing');
-      return;
-    }
-
-    hud.classList.remove('is-buffering', 'is-crossfading', 'is-playing');
-    hud.classList.add(`is-${mode}`, 'visible');
-    label.textContent = text;
-
-    if (typeof autoHideMs === 'number' && autoHideMs > 0) {
-      playbackStatusHideTimeout = setTimeout(() => {
-        hud.classList.remove('visible');
-        playbackStatusHideTimeout = null;
-      }, autoHideMs);
-    }
-  }
-  window.setPlaybackStatus = setPlaybackStatus;
-
   // Next Track Preparation & Preload System
   let preparedTrack = null;
   let isNextTrackReady = false;
@@ -892,7 +588,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeSearchId = 0;
   let lyricsData = [];
   let lyricsDataIsSynced = false;
-  let plainLyricsCanProgress = false;
   let activeLyricIndex = -1;
   const lyricsCacheStorageKey = 'melopair_lyrics_cache_v1';
   const lyricsResponseCache = new Map();
@@ -900,17 +595,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const LYRICS_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
   function getLyricsCacheTrackKey(track) {
-    const cleanTitle = String(track?.title || '')
-      .replace(/\s*[\[(]\s*(?:(?:feat(?:uring)?|ft)\.?|with|official(?:\s+(?:music\s+)?(?:audio|video|lyrics?))?)[^\])]*[\])]/giu, ' ')
-      .replace(/\s*-\s*(?:remaster(?:ed)?(?:\s+\d{4})?|lyric\s+video)\b.*$/iu, ' ')
-      .replace(/[\s.,!?;:]+$/u, '').replace(/\s+/gu, ' ').trim();
-    const primaryArtist = String(track?.artist || '')
-      .replace(/^(?:Song|Video|Episode)\s*•\s*/iu, '')
-      .replace(/\s*-\s*Topic$/iu, '').replace(/\s*VEVO$/iu, '')
-      .split(/\s*(?:&|,|\/|;|\bfeat(?:uring)?\.?\b|\bft\.?\b|\bx\b)\s*/iu)[0];
-    const key = `${cleanTitle}::${primaryArtist}`.normalize('NFKD').replace(/\p{M}/gu, '')
-      .toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/gu, ' ');
-    return key ? `lyrics:${key}` : '';
+    const id = String(track?.id || '').trim().replace(/\s+/gu, '');
+    if (id) return `id:${id}`;
+    const fallback = `${track?.title || ''}::${track?.artist || ''}`
+      .normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    return fallback ? `text:${fallback}` : '';
   }
 
   function readCachedLyrics(track) {
@@ -947,6 +636,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let scrollTimeout = null;
   let sleepTimerInterval = null;
   let sleepRemainingSec = 0;
+  const LYRIC_TIMING_OFFSET = 0.15; // 150ms lead-time compensation for vocal onset
 
   // Web Audio Context & Parametric Equalizer Nodes
   let audioCtx = null;
@@ -990,7 +680,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let boomSpatialSplitter = null;
   let boomSpatialMerger = null;
   let boomSpatialOutputSplitter = null;
-  let boomSpatialPannerSumGain = null;
+  let boomSpatialOutputMerger = null;
   let boomDelayL = null;
   let boomDelayR = null;
   let boomCrossfeedL = null;
@@ -1299,14 +989,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Keep the channels separate through HRTF. A single PannerNode downmixes
       // stereo input to mono, which makes the virtual surround effect disappear.
+      boomSpatialOutputSplitter = audioCtx.createChannelSplitter(2);
       boomSpatialPannerL = audioCtx.createPanner();
       boomSpatialPannerR = audioCtx.createPanner();
-      // Each HRTF PannerNode emits stereo. Summing them through a GainNode
-      // preserves those stereo channels; a ChannelMerger would downmix each
-      // panner into one channel and cause strong phase cancellation.
-      boomSpatialOutputSplitter = audioCtx.createChannelSplitter(2);
-      boomSpatialPannerSumGain = audioCtx.createGain();
-      boomSpatialPannerSumGain.gain.value = 0.5;
+      boomSpatialOutputMerger = audioCtx.createChannelMerger(2);
       [boomSpatialPannerL, boomSpatialPannerR].forEach(panner => {
         panner.panningModel = 'HRTF';
         panner.distanceModel = 'inverse';
@@ -1379,15 +1065,15 @@ document.addEventListener('DOMContentLoaded', () => {
       connectTracked(boomSpatialMerger, boomSpatialOutputSplitter, 'boomSpatialMerger', 'boomSpatialOutputSplitter', 'shared');
       connectTracked(boomSpatialOutputSplitter, boomSpatialPannerL, 'boomSpatialOutputSplitter', 'boomSpatialPannerL', 'shared', 0);
       connectTracked(boomSpatialOutputSplitter, boomSpatialPannerR, 'boomSpatialOutputSplitter', 'boomSpatialPannerR', 'shared', 1);
-      connectTracked(boomSpatialPannerL, boomSpatialPannerSumGain, 'boomSpatialPannerL', 'boomSpatialPannerSumGain', 'shared');
-      connectTracked(boomSpatialPannerR, boomSpatialPannerSumGain, 'boomSpatialPannerR', 'boomSpatialPannerSumGain', 'shared');
+      connectTracked(boomSpatialPannerL, boomSpatialOutputMerger, 'boomSpatialPannerL', 'boomSpatialOutputMerger', 'shared', 0, 0);
+      connectTracked(boomSpatialPannerR, boomSpatialOutputMerger, 'boomSpatialPannerR', 'boomSpatialOutputMerger', 'shared', 0, 1);
 
       // HRTF stereo output -> Night Mode Compressor (Active) & Bypass
-      connectTracked(boomSpatialPannerSumGain, boomNightCompressor, 'boomSpatialPannerSumGain', 'boomNightCompressor', 'shared');
+      connectTracked(boomSpatialOutputMerger, boomNightCompressor, 'boomSpatialOutputMerger', 'boomNightCompressor', 'shared');
       connectTracked(boomNightCompressor, boomNightActiveGain, 'boomNightCompressor', 'boomNightActiveGain', 'shared');
       connectTracked(boomNightActiveGain, masterGain, 'boomNightActiveGain', 'masterGain', 'shared');
 
-      connectTracked(boomSpatialPannerSumGain, boomNightBypassGain, 'boomSpatialPannerSumGain', 'boomNightBypassGain', 'shared');
+      connectTracked(boomSpatialOutputMerger, boomNightBypassGain, 'boomSpatialOutputMerger', 'boomNightBypassGain', 'shared');
       connectTracked(boomNightBypassGain, masterGain, 'boomNightBypassGain', 'masterGain', 'shared');
 
       // Primary Output Path (Default output e.g. Laptop Speakers with delay compensation)
@@ -1442,51 +1128,33 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!gainB) gainB = audioCtx.createGain();
         if (!masterGain) masterGain = audioCtx.createGain();
 
-        // A failed DSP setup can leave only one deck captured by Web Audio.
-        // Rebuild captured decks through a plain stereo graph and leave any
-        // uncaptured deck on native HTMLAudioElement output so neither is silent.
+        // Discard partial DSP wiring and create one reliable stereo route.
         try { srcA?.disconnect(); } catch (_) {}
         try { srcB?.disconnect(); } catch (_) {}
-        try { gainA?.disconnect(); } catch (_) {}
-        try { gainB?.disconnect(); } catch (_) {}
         try { masterGain.disconnect(); } catch (_) {}
-        audioGraphConnections.A = [];
-        audioGraphConnections.B = [];
-        audioGraphConnections.shared = [];
-        const now = audioCtx.currentTime;
-        masterGain.gain.setValueAtTime(isMuted ? 0 : userVolume, now);
-        gainA.gain.setValueAtTime(activeAudio === audioA ? 1 : 0, now);
-        gainB.gain.setValueAtTime(activeAudio === audioB ? 1 : 0, now);
-        if (srcA && audioA) {
-          srcA.connect(gainA);
-          gainA.connect(masterGain);
-          audioGraphConnections.A.push('srcA -> gainA', 'gainA -> masterGain');
-        }
-        if (srcB && audioB) {
-          srcB.connect(gainB);
-          gainB.connect(masterGain);
-          audioGraphConnections.B.push('srcB -> gainB', 'gainB -> masterGain');
-        }
+        masterGain.gain.setValueAtTime(isMuted ? 0 : userVolume, audioCtx.currentTime);
+        gainA.gain.setValueAtTime(activeAudio === audioA ? 1 : 0, audioCtx.currentTime);
+        gainB.gain.setValueAtTime(activeAudio === audioB ? 1 : 0, audioCtx.currentTime);
+        srcA?.connect(gainA);
+        srcB?.connect(gainB);
+        gainA.connect(masterGain);
+        gainB.connect(masterGain);
         masterGain.connect(audioCtx.destination);
-        audioGraphConnections.shared.push('masterGain -> AudioContext.destination');
         audioGraphFallbackActive = true;
         isAudioContextInit = true;
-        normalizeWebAudioDeckElements();
         startMainLoop();
-        console.warn('[Audio Engine] Simple stereo fallback is active; EQ/3D effects are bypassed.', {
-          deckA: srcA ? 'Web Audio fallback' : 'native element output',
-          deckB: srcB ? 'Web Audio fallback' : 'native element output'
-        });
+        console.warn('[Audio Engine] Simple stereo fallback is active; EQ/3D effects are bypassed.');
       } catch (fallbackError) {
         console.error('[Audio Engine] Could not build Web Audio fallback:', fallbackError);
-        // Keep native playback available for every deck not captured by Web Audio.
-        audioGraphFallbackActive = true;
-        isAudioContextInit = true;
-        normalizeWebAudioDeckElements();
-        for (const [deck, source] of [[audioA, srcA], [audioB, srcB]]) {
-          if (!deck || source) continue;
-          deck.volume = isMuted ? 0 : userVolume;
-          deck.muted = isMuted;
+        // If source creation never captured the elements, preserve native audio.
+        if (!srcA && !srcB) {
+          audioGraphFallbackActive = true;
+          isAudioContextInit = true;
+          for (const deck of [audioA, audioB]) {
+            if (!deck) continue;
+            deck.volume = isMuted ? 0 : userVolume;
+            deck.muted = isMuted;
+          }
         }
       }
     }
@@ -1507,7 +1175,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function getDeckGainNode(deck) {
-    if (audioGraphFallbackActive && !(deck === audioA ? srcA : deck === audioB ? srcB : null)) return null;
+    if (audioGraphFallbackActive && !srcA && !srcB) return null;
     return deck === audioA ? gainA : deck === audioB ? gainB : null;
   }
 
@@ -1545,43 +1213,6 @@ document.addEventListener('DOMContentLoaded', () => {
     rampDeckAudioGain(deck, value, rampSeconds);
   }
 
-  function restoreActiveDeckOutput(deck) {
-    // A media element can report `playing` while its deck or shared master gain
-    // is still at zero after a preload handoff or a resumed playback. Recover
-    // only the confirmed active track; never raise the preloaded deck or alter
-    // either side while a crossfade is in progress.
-    if (!deck || deck !== activeAudio || isCrossfading || !currentTrack) return;
-    if (deck.dataset.trackId !== String(currentTrack.id)) return;
-
-    const deckGain = getDeckGainNode(deck);
-    if (deckGain) {
-      deck.volume = 1;
-      deck.muted = false;
-    } else if (audioGraphFallbackActive) {
-      deck.volume = isMuted ? 0 : userVolume;
-      deck.muted = isMuted;
-    }
-
-    if (masterGain && audioCtx) {
-      masterGain.gain.setTargetAtTime(isMuted ? 0 : userVolume, audioCtx.currentTime, 0.02);
-    }
-    rampDeckAudioGain(deck, 1, 0.04);
-    if (audioCtx && audioCtx.state !== 'running') {
-      void ensureAudioContextRunning('active deck started playback').catch(error => {
-        console.error('[Audio Route] Could not resume output for the active playing deck:', error);
-      });
-    }
-    console.info('[Audio Route] Active deck output verified on playing', {
-      trackId: currentTrack.id,
-      deck: deck === audioA ? 'A' : 'B',
-      volume: deck.volume,
-      muted: deck.muted,
-      deckGain: deckGain?.gain?.value ?? null,
-      masterGain: masterGain?.gain?.value ?? null,
-      audioContextState: audioCtx?.state || 'unavailable'
-    });
-  }
-
   function rampCrossfadeGain(gainNode, value, rampSeconds = 0.05) {
     if (!gainNode || !audioCtx) return;
     const now = audioCtx.currentTime;
@@ -1616,18 +1247,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function normalizeWebAudioDeckElements() {
     // With MediaElementAudioSourceNodes, element volume/mute must not become a
     // second per-deck mixer. Keep both elements transparent and apply the
-    // user's volume/mute once at masterGain. If partial graph setup left a deck
-    // uncaptured, preserve its native element output and apply volume there.
-    if (!audioCtx || isAndroid) return;
-    for (const [deck, source] of [[audioA, srcA], [audioB, srcB]]) {
+    // user's volume/mute once at masterGain. Android keeps its direct path.
+    if (!audioCtx || isAndroid || (audioGraphFallbackActive && !srcA && !srcB)) return;
+    for (const deck of [audioA, audioB]) {
       if (!deck) continue;
-      if (source) {
-        deck.volume = 1;
-        deck.muted = false;
-      } else if (audioGraphFallbackActive) {
-        deck.volume = isMuted ? 0 : userVolume;
-        deck.muted = isMuted;
-      }
+      deck.volume = 1;
+      deck.muted = false;
     }
   }
 
@@ -1697,7 +1322,6 @@ document.addEventListener('DOMContentLoaded', () => {
     savePersistentState();
   }
 
-
   function checkPlaybackLifecycle() {
     if (isYtActive) {
       if (!isPlaying) return;
@@ -1718,7 +1342,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (dockSeekFill && !isSeeking) dockSeekFill.style.width = `${pct}%`;
       if (dockSeekThumb && !isSeeking) dockSeekThumb.style.left = `${pct}%`;
 
-      syncLyricsWithTime(curTime);
+      try {
+        syncLyricsWithTime(curTime);
+      } catch (lyricErr) {
+        console.warn('[Lifecycle] YT syncLyricsWithTime error caught safely:', lyricErr);
+      }
 
       if (isPlaying && (Date.now() - lastBroadcastTime > 500)) {
         broadcastEchoRoomState(false);
@@ -1726,43 +1354,19 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Always drive time, scrubber, lyrics and crossfade from the active deck
-    if (!activeAudio) return;
-
-    const curTime = activeAudio.currentTime || 0;
-    const dur = (isFinite(activeAudio.duration) && activeAudio.duration > 0)
-      ? activeAudio.duration
-      : (currentTrack?.duration || 214);
-
-    // Natural track end or EOF check
-    const isAtEnd = activeAudio.ended || (dur > 5 && curTime >= dur - 0.35);
-    if (isAtEnd && !isCrossfading && (isPlaying || activeAudio.ended)) {
-      console.log('[Playback Lifecycle] Track reached end. Triggering auto-advance transition...');
-      executeTransition('auto');
-      return;
-    }
-
-    // Crossfade trigger check near end of track
-    if (crossfadeSeconds > 0 && dur > 10 && curTime >= (dur - crossfadeSeconds) && !isCrossfading && isPlaying) {
-      console.log('[Playback Lifecycle] Crossfade threshold reached. Blending next track...');
-      executeTransition('auto');
-    }
-
-    const isAudioPlaying = (!activeAudio.paused && !activeAudio.ended && isFinite(activeAudio.currentTime)) || isPlaying;
+    // Snapshot the current role once per tick. Crossfade promotion swaps this
+    // reference atomically, so every lyric/progress read in this tick uses one deck.
+    const playbackDeck = activeAudio;
+    if (!playbackDeck) return;
+    const isAudioPlaying = (!playbackDeck.paused && !playbackDeck.ended && isFinite(playbackDeck.currentTime)) || isPlaying;
     if (!isAudioPlaying) return;
 
+    const curTime = playbackDeck.currentTime;
+    const dur = (isFinite(playbackDeck.duration) && playbackDeck.duration > 0)
+      ? playbackDeck.duration
+      : (currentTrack?.duration || 214);
     const pct = dur > 0 ? (curTime / dur) * 100 : 0;
     savePlaybackCheckpoint(curTime);
-
-    // Real-Time Session Adaptation: Positive signal when track plays past 75%
-    if (currentTrack && !currentTrack._sessionPositiveAwarded && dur > 30 && (curTime / dur) >= 0.75) {
-      currentTrack._sessionPositiveAwarded = true;
-      const posArtist = normalizeTasteLabel(feedPrimaryArtist(currentTrack.artist));
-      if (posArtist) {
-        sessionPositiveArtists.add(posArtist);
-        console.log(`[Radio Adaptation] Positive signal recorded for "${posArtist}" (played >= 75%).`);
-      }
-    }
 
     // Progress bar and timestamp update driven by active player
     if (dockCurrentTime) dockCurrentTime.textContent = formatTime(curTime);
@@ -1771,15 +1375,29 @@ document.addEventListener('DOMContentLoaded', () => {
     if (dockSeekThumb && !isSeeking) dockSeekThumb.style.left = `${pct}%`;
 
     // 1. High precision lyric synchronization
-    syncLyricsWithTime(curTime);
+    try {
+      syncLyricsWithTime(curTime);
+    } catch (lyricErr) {
+      console.warn('[Lifecycle] Lyric sync non-fatal error:', lyricErr);
+    }
 
     // 2. Prepare next track: preload as soon as playback is underway (to eliminate buffering breaks)
     if (isPlaying && !isPreparingNextTrack && !isNextTrackReady && queue.length > 1) {
       prepareNextTrack();
     }
 
-    // 3. Evaluate Silence Trimming
+    // 3. Evaluate Silence Trimming (skip silent intros, silent outros, and muted sections)
     evaluateSilenceTrimming(curTime, dur);
+
+    // 4. Crossfade trigger check
+    if (crossfadeSeconds > 0 && dur > 10 && curTime >= (dur - crossfadeSeconds) && !isCrossfading) {
+      executeTransition('auto');
+    }
+
+    // 5. Natural track end fallback (if crossfade was 0s or skipped)
+    if (playbackDeck.ended && !isCrossfading) {
+      executeTransition('auto');
+    }
 
     // 6. High-Frequency Heartbeat for Phase-Locked Loop (PLL) on Satellites
     if (isPlaying && (Date.now() - lastBroadcastTime > 500)) {
@@ -2009,9 +1627,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateImmersiveLayoutState();
     handleResize();
-    if (targetView === viewLyrics && !isOledBgMode && !ambientCloudAnimId) {
-      initAmbientClouds();
-    }
   }
   window.echoSwitchView = switchStageView;
   window.switchStageView = switchStageView;
@@ -2125,9 +1740,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (kineticBgLabel) {
       kineticBgLabel.textContent = isOledBgMode ? 'OLED Black' : 'Ambient Cloud';
     }
-    if (!isOledBgMode && viewLyrics && viewLyrics.classList.contains('active') && !ambientCloudAnimId) {
-      initAmbientClouds();
-    }
     savePersistentState();
   }
 
@@ -2227,44 +1839,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 2. Update Up Next Track Count & Badge
     if (queueCountBadge) {
-      const upNextTracks = [...manualQueue, ...contextQueue].filter(t => !currentTrack || t.id !== currentTrack.id);
-      const radioTracks = isAutoplayEnabled ? autoplayQueue.filter(t => !currentTrack || t.id !== currentTrack.id) : [];
-      const totalUpcoming = upNextTracks.length + radioTracks.length;
-      queueCountBadge.textContent = `${totalUpcoming} Next • Radio`;
+      const upcomingCount = queue.filter(t => !currentTrack || t.id !== currentTrack.id).length;
+      queueCountBadge.textContent = `${upcomingCount} Next • Radio`;
     }
 
-    // 3. Render Upcoming Tracks List (Separated Up Next vs Autoplay)
+    // 3. Render Upcoming Tracks List
     if (!queueTrackList) return;
     queueTrackList.innerHTML = '';
 
-    let upNextTracks = [...manualQueue, ...contextQueue].filter(t => !currentTrack || t.id !== currentTrack.id);
-    let radioTracks = isAutoplayEnabled ? autoplayQueue.filter(t => !currentTrack || t.id !== currentTrack.id) : [];
+    const upcomingTracks = queue.filter(t => !currentTrack || t.id !== currentTrack.id);
 
-    // Fallback: If 3-tier sub-queues are empty but master queue has tracks (e.g. tests or legacy seed)
-    if (upNextTracks.length === 0 && radioTracks.length === 0 && Array.isArray(queue) && queue.length > 0) {
-      const remaining = queue.filter(t => !currentTrack || t.id !== currentTrack.id);
-      upNextTracks = remaining.filter(t => !t.isAutoplaySuggestion && !autoQueueTrackIds.has(t.id));
-      radioTracks = remaining.filter(t => t.isAutoplaySuggestion || autoQueueTrackIds.has(t.id));
-      if (upNextTracks.length === 0 && radioTracks.length === 0) {
-        upNextTracks = remaining;
+    if (upcomingTracks.length === 0) {
+      if (isBuildingRadioMix) {
+        queueTrackList.innerHTML = `<div class="empty-state queue-loading-shimmer" style="padding: 24px; text-align: center; color: var(--text-secondary, #8e8e93);">Building mix for "${escapeHtml(currentTrack?.title || 'track')}"...</div>`;
+      } else {
+        queueTrackList.innerHTML = '<div class="empty-state">No upcoming tracks in radio queue.</div>';
       }
-    }
-
-    if (upNextTracks.length === 0 && radioTracks.length === 0) {
-      queueTrackList.innerHTML = '<div class="empty-state">No upcoming tracks in radio queue.</div>';
       return;
     }
 
-    function createQueueRowElement(track, idx, isRadio = false, queueKind = 'autoplay', queueIndex = idx - 1) {
+    upcomingTracks.forEach((track, idx) => {
+      if (autoQueueTrackIds.has(track.id) && !autoQueueTrackIds.has(upcomingTracks[idx - 1]?.id)) {
+        const label = document.createElement('div');
+        label.className = 'queue-autoplay-label';
+        label.textContent = `Autoplay • Similar to ${currentTrack?.title || 'this track'}`;
+        queueTrackList.appendChild(label);
+      }
       const isFav = favorites.has(track.id);
       const item = document.createElement('div');
-      item.className = 'queue-item' + (isRadio ? ' queue-item-radio' : '');
-      item.draggable = true;
-      item.dataset.queueTrackId = String(track.id);
-      item.dataset.queueKind = queueKind;
-      item.dataset.queueIndex = String(queueIndex);
+      item.className = 'queue-item';
       item.innerHTML = `
-        <span class="queue-index">${idx}</span>
+        <span class="queue-index">${idx + 1}</span>
         <img class="queue-thumb" loading="lazy" decoding="async" src="${track.artwork || track.thumbnail || 'default-art.png'}" alt="Cover" onerror="this.src='default-art.png'">
         <div class="queue-meta">
           <span class="queue-name">${escapeHtml(track.title)}</span>
@@ -2272,173 +1877,33 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <span class="queue-dur">${formatTime(track.duration || 180)}</span>
         <div class="queue-actions">
-          <button class="action-btn-mini queue-drag-handle" type="button" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</button>
-          <button class="action-btn-mini queue-move-up-btn" type="button" title="Move up" aria-label="Move ${escapeHtml(track.title)} up">↑</button>
-          <button class="action-btn-mini queue-move-down-btn" type="button" title="Move down" aria-label="Move ${escapeHtml(track.title)} down">↓</button>
-          <button class="action-btn-mini queue-remove-btn" type="button" title="Remove from queue" aria-label="Remove ${escapeHtml(track.title)}">×</button>
           <button class="action-btn-mini fav-btn ${isFav ? 'liked' : ''}" title="Favorite">
             ${isFav ? '♥' : '♡'}
           </button>
         </div>
       `;
+
       item.addEventListener('click', (e) => {
-        if (e.target.closest('.queue-move-up-btn')) {
-          e.stopPropagation();
-          moveQueueItem(queueKind, queueIndex, -1);
-          return;
-        }
-        if (e.target.closest('.queue-move-down-btn')) {
-          e.stopPropagation();
-          moveQueueItem(queueKind, queueIndex, 1);
-          return;
-        }
-        if (e.target.closest('.queue-remove-btn')) {
-          e.stopPropagation();
-          removeQueueItem(queueKind, queueIndex);
-          return;
-        }
         if (e.target.closest('.fav-btn')) {
           e.stopPropagation();
           toggleFavorite(track);
           return;
         }
-        playTrack(track);
+        playTrack(track, 'QUEUE');
       });
-      item.addEventListener('dragstart', event => {
-        event.dataTransfer?.setData('text/plain', JSON.stringify({ kind: queueKind, index: queueIndex }));
-        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
-      });
-      item.addEventListener('dragover', event => { event.preventDefault(); });
-      item.addEventListener('drop', event => {
-        event.preventDefault();
-        try {
-          const from = JSON.parse(event.dataTransfer?.getData('text/plain') || 'null');
-          if (from) reorderQueueItem(from.kind, from.index, queueKind, queueIndex);
-        } catch (error) {
-          console.warn('[Queue] Could not reorder dragged track:', error);
-        }
-      });
-      return item;
-    }
 
-    if (upNextTracks.length > 0) {
-      const upNextHeader = document.createElement('div');
-      upNextHeader.className = 'queue-section-header';
-      upNextHeader.innerHTML = `<span>Up Next</span><span class="queue-section-badge">${upNextTracks.length}</span>`;
-      queueTrackList.appendChild(upNextHeader);
-
-      upNextTracks.forEach((track, idx) => {
-        const sourceQueue = manualQueue.some(item => item.id === track.id) ? manualQueue : contextQueue;
-        queueTrackList.appendChild(createQueueRowElement(track, idx + 1, false, sourceQueue === manualQueue ? 'manual' : 'context', sourceQueue.findIndex(item => item.id === track.id)));
-      });
-    }
-
-    if (radioTracks.length > 0) {
-      const radioHeader = document.createElement('div');
-      radioHeader.className = 'queue-section-header autoplay-section-header';
-      const labelText = activeRadioVibeLabel ? `Autoplay • ${escapeHtml(activeRadioVibeLabel)}` : `Autoplay • Similar to ${escapeHtml(currentTrack?.title || 'Current')}`;
-      radioHeader.innerHTML = `<span>${labelText}</span><span class="queue-section-badge">Radio</span>`;
-      queueTrackList.appendChild(radioHeader);
-
-      radioTracks.forEach((track, idx) => {
-        queueTrackList.appendChild(createQueueRowElement(track, upNextTracks.length + idx + 1, true, 'autoplay', autoplayQueue.findIndex(item => item.id === track.id)));
-      });
-    }
+      queueTrackList.appendChild(item);
+    });
   }
 
-  function addManualQueueTrack(track, playNext = false) {
+  function addManualQueueTrack(track) {
     if (!track?.id) return false;
     const songKey = trackSongKey(track);
-    if ([...manualQueue, ...contextQueue, ...autoplayQueue].some(item => item.id === track.id || trackSongKey(item) === songKey)) return false;
-    const previousHeadId = getNextQueueTrack()?.id || '';
-    const item = { ...track, isManualQueue: true, isAutoplaySuggestion: false };
-    if (playNext) {
-      manualQueue.unshift(item);
-    } else {
-      manualQueue.push(item);
-    }
-    rememberRecentArtist(item);
-    syncMasterQueue();
+    if (queue.some(item => item.id === track.id || trackSongKey(item) === songKey)) return false;
+    queue.push({ ...track, isAutoplaySuggestion: false });
     renderQueueList();
-    window.renderNowPlayingDrawerQueue?.();
-    if (getNextQueueTrack()?.id !== previousHeadId) prepareNextTrack();
     return true;
   }
-
-  const queueActionTracks = new Map();
-  function queueActionMarkup(track) {
-    if (!track?.id) return '';
-    queueActionTracks.set(String(track.id), track);
-    const id = escapeHtml(String(track.id));
-    return `<div class="track-queue-actions" role="group" aria-label="Queue actions for ${escapeHtml(track.title || 'track')}">
-      <button type="button" class="track-queue-action" data-queue-action="play-next" data-track-id="${id}" title="Play next">Play Next</button>
-      <button type="button" class="track-queue-action" data-queue-action="add" data-track-id="${id}" title="Add to queue">+ Queue</button>
-    </div>`;
-  }
-
-  document.addEventListener('click', event => {
-    const button = event.target.closest('.track-queue-action');
-    if (!button) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const track = queueActionTracks.get(button.dataset.trackId);
-    if (!track) return;
-    const playNext = button.dataset.queueAction === 'play-next';
-    if (!addManualQueueTrack(track, playNext)) showToast(`"${track.title}" is already in Up Next`);
-    else showToast(playNext ? 'Playing next' : 'Added to queue');
-  }, true);
-
-  function mutateQueue(kind, mutator) {
-    const target = kind === 'context' ? contextQueue : kind === 'autoplay' ? autoplayQueue : manualQueue;
-    if (!Array.isArray(target)) return false;
-    const changed = mutator(target);
-    if (!changed) return false;
-    syncMasterQueue();
-    renderQueueList();
-    window.renderNowPlayingDrawerQueue?.();
-    prepareNextTrack();
-    return true;
-  }
-
-  function moveQueueItem(kind, index, delta) {
-    return mutateQueue(kind, items => {
-      const targetIndex = index + delta;
-      if (index < 0 || targetIndex < 0 || index >= items.length || targetIndex >= items.length) return false;
-      [items[index], items[targetIndex]] = [items[targetIndex], items[index]];
-      return true;
-    });
-  }
-
-  function removeQueueItem(kind, index) {
-    return mutateQueue(kind, items => {
-      if (index < 0 || index >= items.length) return false;
-      items.splice(index, 1);
-      return true;
-    });
-  }
-
-  function reorderQueueItem(fromKind, fromIndex, toKind, toIndex) {
-    if (fromKind !== toKind) return false;
-    return mutateQueue(fromKind, items => {
-      if (fromIndex < 0 || fromIndex >= items.length || toIndex < 0 || toIndex >= items.length || fromIndex === toIndex) return false;
-      const [item] = items.splice(fromIndex, 1);
-      items.splice(toIndex, 0, item);
-      return true;
-    });
-  }
-
-  function clearUpcomingQueue() {
-    manualQueue = [];
-    contextQueue = [];
-    autoplayQueue = [];
-    syncMasterQueue();
-    renderQueueList();
-    window.renderNowPlayingDrawerQueue?.();
-    prepareNextTrack();
-    showToast('Up Next cleared');
-  }
-  document.getElementById('clearQueueBtn')?.addEventListener('click', clearUpcomingQueue);
-  document.getElementById('npClearQueueBtn')?.addEventListener('click', clearUpcomingQueue);
 
   function toggleFavorite(track) {
     if (!track || !track.id) return;
@@ -2449,8 +1914,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       favorites.add(track.id);
       favoriteTracksMap.set(track.id, track);
-      const posArtist = normalizeTasteLabel(feedPrimaryArtist(track.artist));
-      if (posArtist) sessionPositiveArtists.add(posArtist);
       showToast(`Added "${track.title}" to favorites ♥`);
     }
     savePersistentState();
@@ -2460,305 +1923,118 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   window.toggleFavorite = toggleFavorite;
 
-  // ------------------------------------------------------------------------
-  // YouTube Music-Style Dynamic Radio Engine (Strict Language & Mood Matching)
-  // ------------------------------------------------------------------------
-  async function generateRadioSuggestions(seedTrack, mode = 'all') {
-    if (!seedTrack || !seedTrack.id || !isAutoplayEnabled) return;
+  async function fetchRadioRecommendations(track, isExplicitStart = false) {
+    if (!window.echoApi || !track?.id || !isAutoplayEnabled) return;
     const isTestMode = new URLSearchParams(window.location.search).get('test_crossfade') === '1';
     if (isTestMode) return;
 
     const requestId = ++radioRecommendationRequestId;
-    const seedPrimary = feedPrimaryArtist(seedTrack.artist);
-    const seedNormPrimary = normalizeTasteLabel(seedPrimary);
-
-    // Detect seed track's exact Language/Region and Mood/Theme profile
-    const seedProfile = detectTrackVibe(seedTrack);
-    activeRadioVibeLabel = seedProfile.headerVibeLabel;
-
-    const featureArtists = new Set(
-      splitFeaturedArtist(seedTrack).displayArtist
-        .split(/[,&]/)
-        .map(v => normalizeTasteLabel(v.trim()))
-        .filter(Boolean)
-    );
-
-    const behavior = readBehaviorProfile();
-    const likedArtistKeys = new Set([...favoriteTracksMap.values()].map(item => normalizeTasteLabel(feedPrimaryArtist(item.artist))));
-    const topArtistsList = getTopListeningArtists().map(item => normalizeTasteLabel(item.name));
-    const topArtistsSet = new Set(topArtistsList);
-
-    const JUNK_REGEX = /\b(top\s*100|playlist|full\s*album|nonstop|jukebox|1\s*hour|compilation|official\s+music\s+video|official\s+video|music\s+video|video\s+song|full\s+video|lyrical\s+video|teaser|trailer|mashup)\b/i;
-
-    function isJunk(t) {
-      if (!t || !t.title) return true;
-      if (JUNK_REGEX.test(t.title)) return true;
-      if (!isCleanFeedTrack(t)) return true;
-      const dur = getTrackDurationSeconds(t) || t.duration;
-      if (dur && (dur < 45 || dur > 480)) return true;
-      return false;
+    if (!queue.some(item => item.id === track.id)) {
+      queue.splice(queueIndex, 0, track);
     }
 
-    let candidates = [];
-
-    // 1. YouTube Music InnerTube Related queue
     try {
-      if (window.echoApi?.getRelatedTracks) {
-        const related = await window.echoApi.getRelatedTracks({
-          videoId: seedTrack.id,
-          artist: seedTrack.artist,
-          title: seedTrack.title
+      let relatedResponse = [];
+      try {
+        relatedResponse = await window.echoApi.getRelatedTracks({
+          videoId: track.id,
+          artist: track.artist,
+          title: track.title
         });
-        if (Array.isArray(related)) {
-          candidates.push(...related);
-        }
+      } catch (error) {
+        console.warn('[Auto-Play Radio] Related-track provider failed; using search fallback:', error.message);
       }
-    } catch (e) {
-      console.warn('[Radio Engine] getRelatedTracks innerTube failed; using search:', e);
-    }
-    if (requestId !== radioRecommendationRequestId) return;
-
-    // 2. Targeted Multi-Query Search based on (Language + Mood)
-    const searchQueries = [
-      `${seedProfile.languageQuery} ${seedProfile.moodLabel} hits`,
-      `${seedProfile.languageQuery} ${seedProfile.moodLabel} songs`,
-      `${seedTrack.title} ${seedPrimary} similar songs`
-    ];
-
-    if (mode === 'familiar') {
-      const matchingLikedArtist = [...favoriteTracksMap.values()]
-        .filter(t => detectTrackVibe(t).region === seedProfile.region)
-        .map(t => feedPrimaryArtist(t.artist))[0] || topArtistsList[0];
-      if (matchingLikedArtist) {
-        searchQueries.push(`${matchingLikedArtist} ${seedProfile.moodLabel} songs`);
-      }
-      searchQueries.push(`${seedPrimary} ${seedProfile.moodQuery}`);
-    } else if (mode === 'discover') {
-      searchQueries.push(`${seedProfile.languageQuery} ${seedProfile.moodLabel} trending songs`);
-      searchQueries.push(`${seedPrimary} similar artists ${seedProfile.languageQuery}`);
-    } else {
-      searchQueries.push(`${seedProfile.languageQuery} popular ${seedProfile.moodLabel} songs`);
-    }
-
-    // Add matching tracks from user's favorites & history that match BOTH region and mood
-    const localMatches = [...favoriteTracksMap.values(), ...history]
-      .filter(t => t && t.id && t.id !== seedTrack.id)
-      .filter(t => {
-        const v = detectTrackVibe(t);
-        return v.region === seedProfile.region && (v.mood === seedProfile.mood || v.moodLabel === seedProfile.moodLabel);
-      });
-    if (localMatches.length > 0) {
-      candidates.push(...localMatches.slice(0, 8));
-    }
-
-    if (window.echoApi?.searchMusic) {
-      const settled = await Promise.allSettled(
-        searchQueries.filter(Boolean).slice(0, 4).map(q => window.echoApi.searchMusic(q, 1, 20))
-      );
       if (requestId !== radioRecommendationRequestId) return;
-      settled.forEach(res => {
-        if (res.status === 'fulfilled' && res.value) {
-          const tracks = res.value.results || (Array.isArray(res.value) ? res.value : []);
+
+      let candidates = Array.isArray(relatedResponse) ? relatedResponse : [];
+      const primaryArtist = String(track.artist || '').split(/[,|&]/)[0].trim();
+      const featureArtists = splitFeaturedArtist(track).displayArtist.split(',').map(value => value.trim()).filter(Boolean);
+      const frequentArtists = getTopListeningArtists().map(item => item.name).filter(name => normalizeTasteLabel(name) !== normalizeTasteLabel(primaryArtist));
+      const vibeQuery = getTrackVibeQuery(track);
+      const fallbackQueries = [
+        [primaryArtist, vibeQuery, 'songs'].filter(Boolean).join(' '),
+        featureArtists.find(name => normalizeTasteLabel(name) !== normalizeTasteLabel(primaryArtist))
+          ? `${featureArtists.find(name => normalizeTasteLabel(name) !== normalizeTasteLabel(primaryArtist))} ${vibeQuery} songs`.trim()
+          : '',
+        frequentArtists[0] ? `${frequentArtists[0]} ${vibeQuery} similar songs`.trim() : '',
+        `${vibeQuery} popular songs`.trim()
+      ].filter((query, index, all) => query && all.indexOf(query) === index).slice(0, 4);
+
+      const alreadyQueued = new Set(queue.map(item => item.id));
+      const recentlyPlayedIds = new Set(history.slice(0, 3).map(item => item.id));
+      const recentlyPlayedSongs = new Set(history.slice(0, 3).map(trackSongKey));
+      const queuedSongKeys = new Set(queue.map(trackSongKey));
+      const exclusions = new Set([...sessionPlayedTrackIds, ...playedTrackIds, ...recentlyPlayedIds, track.id, ...alreadyQueued]);
+      const cleanedRelatedCount = filterCleanFeedTracks(candidates, { homeShelf: true })
+        .filter(item => !exclusions.has(item.id)).length;
+
+      if (cleanedRelatedCount < 8 && window.echoApi.searchMusic) {
+        const supplemental = await Promise.allSettled(fallbackQueries.map(query => window.echoApi.searchMusic(query, 1, 20)));
+        if (requestId !== radioRecommendationRequestId) return;
+        supplemental.forEach(result => {
+          if (result.status !== 'fulfilled') return;
+          const response = result.value;
+          const tracks = response?.results || (Array.isArray(response) ? response : []);
           candidates.push(...tracks);
-        }
+        });
+      }
+
+      candidates = filterCleanFeedTracks(candidates, { homeShelf: true })
+        .filter(item => !exclusions.has(item.id))
+        .filter(item => !sessionPlayedSongKeys.has(trackSongKey(item)))
+        .filter(item => !recentlyPlayedSongs.has(trackSongKey(item)))
+        .filter(item => !queuedSongKeys.has(trackSongKey(item)));
+      const behavior = readBehaviorProfile();
+      const currentArtists = new Set(featureArtists.map(normalizeTasteLabel));
+      const currentGenres = new Set(getTrackGenres(track).map(normalizeTasteLabel));
+      const currentMoods = new Set(getTrackMoods(track).map(normalizeTasteLabel));
+      const likedArtistKeys = new Set([...favoriteTracksMap.values()].map(item => feedPrimaryArtist(item.artist)));
+      const ranked = dedupeAndCapFeedTracks(candidates, Infinity, 10).map((item, index) => {
+        const artist = normalizeTasteLabel(item.artist);
+        const candidateArtistKeys = String(item.artist || '').split(/[,&]/).map(normalizeTasteLabel);
+        const genres = getTrackGenres(item).map(normalizeTasteLabel);
+        const moods = getTrackMoods(item).map(normalizeTasteLabel);
+        const artistAffinity = Number(behavior.artists?.[artist]) || 0;
+        let score = Math.max(0, 6 - index * 0.15);
+        if (currentArtists.has(artist) || candidateArtistKeys.some(key => currentArtists.has(key))) score += 8;
+        if (genres.some(value => currentGenres.has(value))) score += 4;
+        if (moods.some(value => currentMoods.has(value))) score += 2;
+        if (favorites.has(item.id) || likedArtistKeys.has(feedPrimaryArtist(item.artist))) score += 4;
+        score += Math.min(5, Math.log1p(artistAffinity) * 1.8);
+        return { track: item, score, index };
+      }).sort((a, b) => b.score - a.score || a.index - b.index)
+        .slice(0, 10)
+        .map(item => ({
+          ...item.track,
+          artwork: item.track.artwork || item.track.thumbnail || 'default-art.png',
+          duration: getTrackDurationSeconds(item.track) || 210,
+          isAutoplaySuggestion: true
+        }));
+
+      const currentQueueIds = new Set(queue.map(item => item.id));
+      const currentQueueSongKeys = new Set(queue.map(trackSongKey));
+      ranked.forEach(item => {
+        const songKey = trackSongKey(item);
+        if (currentQueueIds.has(item.id) || currentQueueSongKeys.has(songKey) || sessionPlayedTrackIds.has(item.id) || playedTrackIds.has(item.id) || sessionPlayedSongKeys.has(songKey)) return;
+        queue.push(item);
+        currentQueueIds.add(item.id);
+        currentQueueSongKeys.add(songKey);
+        autoQueueTrackIds.add(item.id);
       });
-    }
-
-    // 3. Strict Language/Region Filtering & Mood Scoring
-    const seenCandidateKeys = new Set();
-    const exclusions = new Set([
-      seedTrack.id,
-      ...manualQueue.map(t => t.id),
-      ...contextQueue.map(t => t.id),
-      ...sessionPlayedTrackIds
-    ]);
-    const exclusionKeys = new Set([
-      trackSongKey(seedTrack),
-      ...manualQueue.map(trackSongKey),
-      ...contextQueue.map(trackSongKey),
-      ...sessionPlayedSongKeys,
-      ...history.slice(0, 20).map(trackSongKey)
-    ]);
-
-    // Mood relationship matrices (adjacent vs opposite)
-    const ADJACENT_MOODS = {
-      romantic: new Set(['chill_lofi', 'sad']),
-      sad: new Set(['dark_night', 'romantic', 'chill_lofi']),
-      dark_night: new Set(['sad', 'hiphop_rap', 'chill_lofi']),
-      party_hype: new Set(['workout_phonk', 'hiphop_rap']),
-      workout_phonk: new Set(['party_hype', 'hiphop_rap']),
-      hiphop_rap: new Set(['party_hype', 'dark_night', 'workout_phonk']),
-      chill_lofi: new Set(['romantic', 'dark_night', 'sad'])
-    };
-
-    const OPPOSITE_MOODS = {
-      sad: new Set(['party_hype', 'workout_phonk']),
-      romantic: new Set(['workout_phonk']),
-      party_hype: new Set(['sad', 'chill_lofi']),
-      workout_phonk: new Set(['sad', 'chill_lofi', 'romantic']),
-      chill_lofi: new Set(['party_hype', 'workout_phonk']),
-      dark_night: new Set(['party_hype']),
-      hiphop_rap: new Set([])
-    };
-
-    const scoredPool = [];
-
-    for (const item of candidates) {
-      if (!item || !item.id || isJunk(item)) continue;
-      const key = trackSongKey(item);
-      if (exclusions.has(item.id) || exclusionKeys.has(key) || seenCandidateKeys.has(key)) continue;
-      seenCandidateKeys.add(key);
-
-      const candidatePrimary = feedPrimaryArtist(item.artist);
-      const candidateNormPrimary = normalizeTasteLabel(candidatePrimary);
-      const candidateAllArtists = String(item.artist || '').split(/[,&]/).map(v => normalizeTasteLabel(v.trim()));
-
-      const candidateProfile = detectTrackVibe(item);
-
-      // --- Hard Region/Language Guard ---
-      // Never mix regional Indian tracks into english_intl queue
-      // Never mix English tracks into hindi, punjabi or south_indian queue
-      // Exception: allow true featured/collaborator match
-      const isDirectCollaborator = candidateAllArtists.some(a => featureArtists.has(a));
-      if (!isDirectCollaborator) {
-        if (seedProfile.region === 'english_intl' && candidateProfile.region !== 'english_intl') {
-          continue; // Block non-English track in English queue
-        }
-        if ((seedProfile.region === 'hindi' || seedProfile.region === 'punjabi' || seedProfile.region === 'south_indian') && candidateProfile.region === 'english_intl') {
-          continue; // Block English track in Desi regional queue
-        }
-        if (seedProfile.region === 'punjabi' && candidateProfile.region !== 'punjabi' && candidateProfile.region !== 'hindi') {
-          continue;
-        }
-        if (seedProfile.region === 'korean' && candidateProfile.region !== 'korean') {
-          continue;
-        }
-        if (seedProfile.region === 'latin' && candidateProfile.region !== 'latin') {
-          continue;
-        }
+      if (ranked.length) {
+        renderQueueList();
+        window.renderNowPlayingDrawerQueue?.();
+        prepareNextTrack();
       }
-
-      let score = 5;
-
-      const recentAndQueuedArtists = [
-        ...recentArtistHistory,
-        ...manualQueue.map(track => feedPrimaryArtist(track.artist)),
-        ...contextQueue.map(track => feedPrimaryArtist(track.artist)),
-        ...autoplayQueue.map(track => feedPrimaryArtist(track.artist))
-      ];
-      const artistOccurrences = recentAndQueuedArtists.filter(artist => artist === candidateNormPrimary).length;
-      score -= 25 * artistOccurrences;
-
-      // Region match score
-      if (candidateProfile.region === seedProfile.region) {
-        score += 6;
-      }
-
-      // Mood Coherence Scoring
-      if (candidateProfile.mood === seedProfile.mood) {
-        score += 8; // Exact mood match
-      } else if (ADJACENT_MOODS[seedProfile.mood]?.has(candidateProfile.mood)) {
-        score += 3; // Adjacent mood match
-      } else if (OPPOSITE_MOODS[seedProfile.mood]?.has(candidateProfile.mood)) {
-        score -= 10; // Opposite mood penalty
-        continue; // Discard completely jarring opposite mood tracks
-      }
-
-      // Featured / collaborator match
-      if (isDirectCollaborator) {
-        score += 4;
-      }
-
-      // Mode-based familiarity scoring
-      const isFamiliar = likedArtistKeys.has(candidateNormPrimary) || topArtistsSet.has(candidateNormPrimary);
-      if (mode === 'familiar') {
-        score += isFamiliar ? 8 : -4;
-      } else if (mode === 'discover') {
-        score += isFamiliar ? -6 : 6;
-      } else {
-        if (isFamiliar) score += 2;
-      }
-
-      // Early skip penalty
-      if (sessionEarlySkippedArtists.has(candidateNormPrimary)) {
-        score -= 5;
-      }
-
-      // Positive session bonus
-      if (sessionPositiveArtists.has(candidateNormPrimary)) {
-        score += 3;
-      }
-
-      const affinity = Number(behavior.artists?.[candidateNormPrimary]) || 0;
-      score += Math.min(3, Math.log1p(affinity) * 1.2);
-
-      scoredPool.push({
-        track: {
-          ...item,
-          artwork: item.artwork || item.thumbnail || 'default-art.png',
-          duration: getTrackDurationSeconds(item) || item.duration || 210,
-          isAutoplaySuggestion: true,
-          detectedVibe: candidateProfile.headerVibeLabel
-        },
-        score,
-        primaryArtist: candidateNormPrimary
-      });
-    }
-
-    scoredPool.sort((a, b) => b.score - a.score);
-
-    // 4. Three-track artist spacing, relaxed only when fewer than four artists are available.
-    const selected = [];
-    const pool = [...scoredPool];
-    const artistCounts = new Map();
-    const distinctArtists = new Set(pool.map(candidate => candidate.primaryArtist));
-    const enforceArtistSpacing = distinctArtists.size >= 4;
-
-    while (selected.length < 15 && pool.length > 0) {
-      // Three intervening tracks are sufficient separation between repeats.
-      const recentArtists = enforceArtistSpacing ? selected.slice(-3).map(t => feedPrimaryArtist(t.artist)) : [];
-
-      const foundIdx = pool.findIndex(c => {
-        const count = artistCounts.get(c.primaryArtist) || 0;
-        if (count >= 2) return false; // Cap at max 2 songs per artist in autoplay
-        return !recentArtists.includes(c.primaryArtist);
-      });
-
-      if (foundIdx !== -1) {
-        const picked = pool[foundIdx];
-        selected.push(picked.track);
-        artistCounts.set(picked.primaryArtist, (artistCounts.get(picked.primaryArtist) || 0) + 1);
-        pool.splice(foundIdx, 1);
-      } else {
-        if (enforceArtistSpacing) break;
-        // Fallback: pick highest-scoring candidate under max-2 cap
-        const fallbackIdx = pool.findIndex(c => (artistCounts.get(c.primaryArtist) || 0) < 2);
-        if (fallbackIdx !== -1) {
-          const picked = pool[fallbackIdx];
-          selected.push(picked.track);
-          artistCounts.set(picked.primaryArtist, (artistCounts.get(picked.primaryArtist) || 0) + 1);
-          pool.splice(fallbackIdx, 1);
-        } else {
-          // If entire remaining pool exceeded 2 songs per artist, take the top one to ensure full queue
-          const picked = pool[0];
-          selected.push(picked.track);
-          pool.splice(0, 1);
-        }
+    } catch (err) {
+      console.warn('Radio recommendations error:', err);
+    } finally {
+      if (requestId === radioRecommendationRequestId) {
+        isBuildingRadioMix = false;
+        renderQueueList();
+        window.renderNowPlayingDrawerQueue?.();
       }
     }
-
-    autoplayQueue = selected;
-    selected.forEach(rememberRecentArtist);
-    syncMasterQueue();
-    renderQueueList();
-    window.renderNowPlayingDrawerQueue?.();
-    prepareNextTrack();
-  }
-  window.generateRadioSuggestions = generateRadioSuggestions;
-  window.generateRadioSuggestions = generateRadioSuggestions;
-
-  async function fetchRadioRecommendations(track, isExplicitStart = false) {
-    return generateRadioSuggestions(track, currentRadioFilterMode);
   }
 
   // ------------------------------------------------------------------------
@@ -2770,9 +2046,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ------------------------------------------------------------------------
 
   // Stream URL Resolver with 5-Hour Expiration Cache
-  async function getOrResolveStreamUrl(trackOrId, trackTitle = '') {
-    const track = trackOrId && typeof trackOrId === 'object' ? trackOrId : { id: trackOrId, title: trackTitle };
-    const videoId = String(track.id || '');
+  async function getOrResolveStreamUrl(videoId, trackTitle = '') {
     if (!videoId || videoId.startsWith('Dracula-')) return null;
     const cached = streamUrlCache.get(videoId);
     if (cached && (Date.now() - cached.timestamp < STREAM_CACHE_TTL_MS)) {
@@ -2780,12 +2054,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (!window.echoApi) return null;
     try {
-      const url = await window.echoApi.getStreamUrl({
-        id: videoId,
-        title: track.title || trackTitle,
-        artist: track.artist || '',
-        duration: getTrackDurationSeconds(track) || 0
-      });
+      const url = await window.echoApi.getStreamUrl(videoId);
       if (url) {
         streamUrlCache.set(videoId, { url, timestamp: Date.now() });
         console.log(`[Prepare] URL resolved for "${trackTitle}": ${url}`);
@@ -2803,50 +2072,50 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function getNextQueueTrack() {
-    if (isRepeat && currentTrack) return currentTrack;
+    if (!queue || queue.length === 0) return null;
+    let nextTrack = null;
 
     if (isShuffle) {
-      const candidates = [...manualQueue, ...contextQueue, ...(isAutoplayEnabled ? autoplayQueue : [])];
+      const candidates = queue.filter(t => t.id !== currentTrack?.id && !playedTrackIds.has(t.id));
       if (candidates.length > 0) {
-        return candidates[Math.floor(Math.random() * candidates.length)];
-      }
-    }
-
-    if (manualQueue.length > 0) {
-      return manualQueue[0];
-    }
-    if (contextQueue.length > 0) {
-      return contextQueue[0];
-    }
-    if (isAutoplayEnabled && autoplayQueue.length > 0) {
-      return autoplayQueue[0];
-    }
-
-    if (!queue || queue.length === 0) {
-      if (Array.isArray(verifiedRealTracks) && verifiedRealTracks.length > 0) {
-        queue = [...verifiedRealTracks];
+        nextTrack = candidates[Math.floor(Math.random() * candidates.length)];
       } else {
-        return null;
+        const otherTracks = queue.filter(t => t.id !== currentTrack?.id);
+        nextTrack = otherTracks[Math.floor(Math.random() * otherTracks.length)] || queue[0];
+      }
+    } else {
+      // Find the next unplayed track forward from queueIndex
+      let candidateIndex = -1;
+      for (let i = queueIndex + 1; i < queue.length; i++) {
+        if (!playedTrackIds.has(queue[i].id) && queue[i].id !== currentTrack?.id) {
+          candidateIndex = i;
+          break;
+        }
+      }
+      if (candidateIndex !== -1) {
+        nextTrack = queue[candidateIndex];
+      } else {
+        // If all forward tracks have been played or queue end reached, check remaining unplayed anywhere
+        const unplayed = queue.find(t => !playedTrackIds.has(t.id) && t.id !== currentTrack?.id);
+        if (unplayed) {
+          nextTrack = unplayed;
+        } else if (queue.length > 1) {
+          // If all tracks in queue have been played, advance to next index modulo length (never same song)
+          const fallbackIdx = (queueIndex + 1) % queue.length;
+          nextTrack = queue[fallbackIdx];
+        } else {
+          nextTrack = queue[0];
+        }
       }
     }
 
-    const currentIndex = queue.findIndex(t => t.id === currentTrack?.id);
-    let nextIndex = currentIndex + 1;
-    if (nextIndex >= queue.length) {
-      nextIndex = 0;
+    // Check if fewer than 5 unplayed tracks remain forward, and trigger RDAMVM radio refill if Autoplay is ON
+    const remainingUnplayed = queue.slice(queueIndex + 1).filter(t => !playedTrackIds.has(t.id));
+    if (remainingUnplayed.length < 5 && isAutoplayEnabled && currentTrack) {
+      void fetchRadioRecommendations(currentTrack, false);
     }
 
-    // If next track is the same as current (e.g. single item queue), replenish queue from verified tracks
-    if (queue[nextIndex]?.id === currentTrack?.id && Array.isArray(verifiedRealTracks) && verifiedRealTracks.length > 1) {
-      const extraTracks = verifiedRealTracks.filter(t => t.id !== currentTrack.id);
-      if (extraTracks.length > 0) {
-        queue.push(...extraTracks);
-        nextIndex = currentIndex + 1;
-        if (typeof renderQueueList === 'function') renderQueueList();
-      }
-    }
-
-    return queue[nextIndex] || null;
+    return nextTrack || null;
   }
 
   function waitForAudioCanPlay(deck, timeoutMs = 12000) {
@@ -2905,7 +2174,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log(`[Prepare] prepare started for "${nextTrack.title}" (${nextTrack.id})`);
 
     try {
-      const url = await getOrResolveStreamUrl(nextTrack);
+      const url = await getOrResolveStreamUrl(nextTrack.id, nextTrack.title);
       if (currentGen !== prepareAbortGen) {
         return;
       }
@@ -3010,28 +2279,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateTrackMetaUI(track, isExplicitStart = false) {
     if (!track) return;
-    loadLyricOffsetForTrack(track);
     updateTrackArtBackdrop(track);
     if (dockTitle) dockTitle.textContent = track.title;
     if (dockArtist) dockArtist.textContent = track.artist || 'MeloPair';
     if (dockThumb) dockThumb.src = track.artwork || track.thumbnail || 'default-art.png';
 
-    // Commit the visible player progress from the same promoted track/deck pair.
-    const activeTrackMatches = activeAudio?.dataset?.trackId === String(track.id);
-    const displayDuration = activeTrackMatches && Number.isFinite(activeAudio.duration) && activeAudio.duration > 0
-      ? activeAudio.duration
-      : (Number(track.durationSec) || Number(track.duration) || 0);
-    const displayPosition = activeTrackMatches ? (Number(activeAudio.currentTime) || 0) : 0;
-    const displayPercent = displayDuration > 0 ? String(Math.min(100, (displayPosition / displayDuration) * 100)) + '%' : '0%';
-    if (dockDuration) dockDuration.textContent = formatTime(displayDuration);
-    if (dockCurrentTime) dockCurrentTime.textContent = formatTime(displayPosition);
-    if (dockSeekFill) dockSeekFill.style.width = displayPercent;
-    if (dockSeekThumb) dockSeekThumb.style.left = displayPercent;
-
     renderQueueList();
     resetLyricsView(track);
     fetchLyrics(track);
-    generateRadioSuggestions(track, currentRadioFilterMode);
+    fetchRadioRecommendations(track, isExplicitStart);
     syncQuickPickPlayingState();
 
     if (window.updateNowPlayingModalUI) window.updateNowPlayingModalUI(track);
@@ -3066,26 +2322,14 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Real-Time Session Adaptation: Early-skip penalty if user skips track before 20s
-    if ((type === 'next' || type === 'manual') && currentTrack) {
-      const cur = activeAudio ? (activeAudio.currentTime || 0) : 0;
-      if (cur > 0.5 && cur < 20) {
-        const skippedArtist = feedPrimaryArtist(currentTrack.artist);
-        if (skippedArtist) {
-          sessionEarlySkippedArtists.add(normalizeTasteLabel(skippedArtist));
-          console.log(`[Radio Adaptation] Early skip (<20s) penalty recorded for "${skippedArtist}". Refreshing queue...`);
-          if (isAutoplayEnabled) {
-            void generateRadioSuggestions(currentTrack, currentRadioFilterMode);
-          }
-        }
-      }
+    if (currentTrack?.id) {
+      markTrackAsPlayed(currentTrack.id);
     }
-
-    // Remove nextTrack from sub-queues and sync
-    manualQueue = manualQueue.filter(t => t.id !== nextTrack.id);
-    contextQueue = contextQueue.filter(t => t.id !== nextTrack.id);
-    autoplayQueue = autoplayQueue.filter(t => t.id !== nextTrack.id);
-    syncMasterQueue();
+    const targetIdx = queue.findIndex(t => t.id === nextTrack.id);
+    if (targetIdx !== -1) {
+      queueIndex = targetIdx;
+    }
+    markTrackAsPlayed(nextTrack.id);
 
     // The crossfade runs on its own timer after this function returns. The old
     // deck can emit `ended` during that fade; ignore that duplicate auto-advance
@@ -3146,8 +2390,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const isManual = (type === 'next' || type === 'prev' || type === 'manual');
 
-    // When explicitly starting a track from a stopped state and idle deck does not already have this exact track, clear idle deck & cancel old queue preload
-    if (isExplicitStart && !canCrossfade && !isPlaying) {
+    // When explicitly starting a track and idle deck does not already have this exact track, clear idle deck & cancel old queue preload
+    if (isExplicitStart && !canCrossfade) {
       idleAudio.pause();
       idleAudio.removeAttribute('src');
       try { idleAudio.currentTime = 0; } catch (e) {}
@@ -3191,7 +2435,7 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast(`Buffering "${nextTrack.title}"... ⏳`);
 
     try {
-      const streamUrl = await getOrResolveStreamUrl(nextTrack);
+      const streamUrl = await getOrResolveStreamUrl(nextTrack.id, nextTrack.title);
       if (currentSeq !== seamlessTransitionSequence) return; // Superseded by a newer transition request
 
       if (!streamUrl || streamUrl.startsWith('yt:')) {
@@ -3268,27 +2512,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Pioneer DJ Mashup Blend & Equal-Power Crossfade
-  async function executeCrossfadeTransition(nextTrack, isManual = false, isExplicitStart = false, transitionSeq = seamlessTransitionSequence) {
+  // Pioneer DJ Mashup Blend & Equal-Power Crossfade (Analyzed from Videos 1000061025 & 1000061023)
+  async function executeCrossfadeTransition(nextTrack, manualOpt = false, isExplicitStart = false, transitionSeq = seamlessTransitionSequence) {
     if (transitionSeq !== seamlessTransitionSequence) return;
     if (isCrossfading) return;
-    if (idleAudio?.dataset?.trackId !== String(nextTrack.id) || preparedTrack?.id !== nextTrack.id) {
-      console.warn('[Crossfade] Incoming deck metadata does not match the selected track; reloading before promotion.', {
-        expectedTrackId: nextTrack.id,
-        deckTrackId: idleAudio?.dataset?.trackId || null,
-        preparedTrackId: preparedTrack?.id || null
-      });
-      await loadAndSeamlessTransition(nextTrack, isManual, isExplicitStart, transitionSeq);
-      return;
-    }
     isCrossfading = true;
 
-    // Use minimum 1.2s fade if crossfade is 0 to guarantee zero pop/click/silence gap
+    const isManual = (typeof manualOpt === 'object' && manualOpt !== null)
+      ? Boolean(manualOpt.isManual)
+      : Boolean(manualOpt);
+
+    // 300ms Manual-Skip Micro-Fade: Smooth click-free transition on user skip, full crossfade on auto-advance
     const effectiveFadeSec = isManual
-      ? (crossfadeSeconds > 0 ? Math.min(crossfadeSeconds, 3.5) : 1.2)
+      ? 0.3
       : (crossfadeSeconds > 0 ? crossfadeSeconds : 1.2);
     console.log(`[Crossfade] crossfade start: transition from "${currentTrack?.title}" to "${nextTrack.title}" (${effectiveFadeSec}s)`);
-    showToast(`DJ Mashup Blend (${effectiveFadeSec.toFixed(1)}s) 🎧`);
+    showToast(isManual ? `Skip Micro-Fade (300ms) ⚡` : `DJ Mashup Blend (${effectiveFadeSec.toFixed(1)}s) 🎧`);
 
     const incomingBass = (activeAudio === audioA) ? bassFilterB : bassFilterA;
     const outgoingBass = (activeAudio === audioA) ? bassFilterA : bassFilterB;
@@ -3522,7 +2761,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const isInlineAudio = typeof streamUrl === 'string' && /^(?:blob:|data:audio\/)/i.test(streamUrl);
     if (window.echoApi && track.id && !track.id.startsWith('Dracula-') && (isElectron || !streamUrl) && !isInlineAudio) {
       showToast(`Loading ${track.title}...`);
-      const resolvedUrl = await getOrResolveStreamUrl(track);
+      const resolvedUrl = await getOrResolveStreamUrl(track.id, track.title);
       if (resolvedUrl) streamUrl = resolvedUrl;
       if (myId !== playRequestId) {
         console.log(`[DIAG-AUDIO] [CANCELED] Discarding outdated stream resolution for "${track.title}" (req #${myId} superseded by #${playRequestId})`);
@@ -3622,22 +2861,86 @@ document.addEventListener('DOMContentLoaded', () => {
     prepareNextTrack();
   }
 
-  function playTrack(track, isExplicitStart = false) {
+  const PlayOrigin = {
+    DISCOVERY: 'DISCOVERY',
+    HOME: 'DISCOVERY',
+    SEARCH: 'DISCOVERY',
+    PLAYLIST: 'PLAYLIST',
+    QUEUE: 'QUEUE',
+    CONTROL: 'CONTROL'
+  };
+  window.PlayOrigin = PlayOrigin;
+
+  function playTrack(track, originOrExplicit = 'DISCOVERY') {
+    let playOrigin = 'DISCOVERY';
+    if (typeof originOrExplicit === 'string') {
+      playOrigin = PlayOrigin[originOrExplicit.toUpperCase()] || 'DISCOVERY';
+    } else if (originOrExplicit === true) {
+      playOrigin = 'DISCOVERY';
+    } else if (originOrExplicit === false) {
+      playOrigin = 'CONTROL';
+    }
+
     // Song selections open the lyrics-first Now Playing screen; automatic
     // next/previous transitions do not call this user-selection entry point.
     openNowPlaying();
-    if (isExplicitStart) {
-      manualQueue = [];
-      contextQueue = [];
-      autoplayQueue = [];
-      syncMasterQueue();
-      if (typeof renderQueueList === 'function') renderQueueList();
+
+    if (playOrigin === 'DISCOVERY') {
+      // Invalidate any in-flight radio fetch
+      ++radioRecommendationRequestId;
+      
+      const isTrackInExistingManualQueue = queue.length > 1 && 
+        queue.some(t => t.id === track.id) && 
+        queue.some(t => t.id !== track.id && !autoQueueTrackIds.has(t.id));
+
+      if (isTrackInExistingManualQueue) {
+        // Track was started within an existing manual/playlist queue (e.g. setQueue)
+        const idx = queue.findIndex(t => t.id === track.id);
+        if (idx !== -1) queueIndex = idx;
+        isBuildingRadioMix = false;
+        renderQueueList();
+        window.renderNowPlayingDrawerQueue?.();
+        executeTransition('manual', track, false);
+        return;
+      }
+
+      // Pure discovery start: Retain manual user-pinned tracks if any, otherwise clean start
+      const pinnedTracks = queue.filter(t => !autoQueueTrackIds.has(t.id) && t.isManualUserPin);
+      queue = [track, ...pinnedTracks];
+      queueIndex = 0;
+      autoQueueTrackIds.clear();
+      isBuildingRadioMix = true;
+      renderQueueList();
+      window.renderNowPlayingDrawerQueue?.();
+      executeTransition('manual', track, true);
+      return;
     }
-    executeTransition('manual', track, isExplicitStart);
+
+    if (playOrigin === 'QUEUE') {
+      const idx = queue.findIndex(t => t.id === track.id);
+      if (idx !== -1) {
+        queueIndex = idx;
+      }
+      executeTransition('manual', track, false);
+      return;
+    }
+
+    if (playOrigin === 'PLAYLIST') {
+      const idx = queue.findIndex(t => t.id === track.id);
+      if (idx !== -1) {
+        queueIndex = idx;
+      }
+      executeTransition('manual', track, false);
+      return;
+    }
+
+    executeTransition('manual', track, false);
   }
 
   function playNextTrack() {
-    executeTransition('next');
+    const next3 = queue.slice(queueIndex + 1, queueIndex + 4).map(t => `"${t.title}"`).join(', ') || '(none)';
+    console.log(`[Queue] Next clicked. Active queue length: ${queue.length}, Current index: ${queueIndex}. Next 3 titles: ${next3}`);
+    return executeTransition('next');
   }
 
   function playPrevTrack() {
@@ -3648,6 +2951,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     executeTransition('prev');
   }
+
+  window.playTrack = playTrack;
+  window.playNextTrack = playNextTrack;
+  window.getCurrentTrack = () => currentTrack;
+  window.getQueue = () => queue;
+  window.setQueue = (newQ) => { queue = Array.isArray(newQ) ? [...newQ] : []; queueIndex = 0; renderQueueList(); };
 
   function setPlayState(playing) {
     isPlaying = playing;
@@ -3680,9 +2989,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     broadcastEchoRoomState(true);
-    if (!playing && !isCrossfading) {
-      setPlaybackStatus('idle', '');
-    }
     if (window.updateNowPlayingModalUI) window.updateNowPlayingModalUI(currentTrack);
     if (window.notifyNativeMediaState) window.notifyNativeMediaState(currentTrack, isPlaying);
   }
@@ -3694,28 +3000,10 @@ document.addEventListener('DOMContentLoaded', () => {
     deck.addEventListener('play', (event) => {
       if (event.currentTarget === activeAudio && !isCrossfading) setPlayState(true);
     });
-    deck.addEventListener('playing', (event) => {
-      if (event.currentTarget !== activeAudio || isCrossfading) return;
-      if (deck.dataset?.trackId === String(currentTrack?.id ?? '') && deck.readyState >= 2) {
-        realignLyrics('auto', false);
-      }
-    });
     deck.addEventListener('pause', (event) => {
-      if (deck.ended) {
-        if (!isCrossfading) {
-          executeTransition('auto');
-        }
-        return;
-      }
       if (event.currentTarget === activeAudio && !isCrossfading && !isPlaybackPending) {
         setPlayState(false);
-        activeLyricIndex = -1;
-        syncLyricsWithTime(activeAudio.currentTime || 0, true);
       }
-    });
-    deck.addEventListener('seeked', (event) => {
-      if (event.currentTarget !== activeAudio) return;
-      realignLyrics('auto', false);
     });
     deck.addEventListener('error', (event) => {
       if (event.currentTarget !== activeAudio) return;
@@ -3833,13 +3121,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const pos = dur > 0 ? (seconds / dur) : 0;
     if (dockSeekFill) dockSeekFill.style.width = `${pos * 100}%`;
     if (dockSeekThumb) dockSeekThumb.style.left = `${pos * 100}%`;
-
-    activeLyricIndex = -1;
-    syncLyricsWithTime(seconds, true);
+    syncLyricsWithTime(seconds);
     broadcastEchoRoomState(true);
-    if (!playing && !isCrossfading) {
-      setPlaybackStatus('idle', '');
-    }
     if (window.updateNowPlayingModalUI) window.updateNowPlayingModalUI(currentTrack);
     if (window.notifyNativeMediaState) window.notifyNativeMediaState(currentTrack, isPlaying);
   }
@@ -3917,74 +3200,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // USER PROFILE & NOTIFICATIONS EVENT LISTENERS
   // ------------------------------------------------------------------------
   function initUserProfileAndNotifications() {
-    let onboardingStage = 'taste';
-    let onboardingReplay = false;
-    let onboardingLaunchTour = true;
-    let forceWelcomeOnboarding = false;
-    const tasteSetupComplete = () => !forceWelcomeOnboarding
-      && (safeStorageGet('melopair_onboarding_done') === 'true' || safeStorageGet('melopair_taste_setup_v1') === 'true');
-    const setOnboardingStage = (stage) => {
-      onboardingStage = stage;
-      tasteCheckingStep?.classList.add('hidden');
-      tasteLoginStep?.classList.add('hidden');
-      tasteSetupStep?.classList.toggle('hidden', stage !== 'taste');
-      tasteImportStep?.classList.toggle('hidden', stage !== 'import');
-      document.querySelectorAll('#mpOnboardingProgress span').forEach((dot, index) => dot.classList.toggle('active', index <= (stage === 'import' ? 1 : 0)));
-    };
-    const openOnboarding = (stage = 'taste') => {
-      onboardingReplay = true;
-      onboardingLaunchTour = false;
-      restoreTasteSelections();
-      setOnboardingStage(stage);
-      tasteOnboarding?.classList.remove('hidden');
-    };
+    const tasteSetupComplete = () => safeStorageGet('melopair_taste_setup_v1') === 'true';
     const updateTasteOnboarding = (user, accountCheckFinished = true) => {
       if (!tasteOnboarding) return;
-      if (tasteSetupComplete() && !onboardingReplay) {
+      if (tasteSetupComplete()) {
         tasteOnboarding.classList.add('hidden');
         return;
       }
       tasteOnboarding.classList.remove('hidden');
       tasteCheckingStep?.classList.toggle('hidden', accountCheckFinished);
-      if (!accountCheckFinished) {
-        tasteLoginStep?.classList.add('hidden');
-        tasteSetupStep?.classList.add('hidden');
-        tasteImportStep?.classList.add('hidden');
-      } else if (!user && !onboardingReplay) {
-        tasteLoginStep?.classList.remove('hidden');
-        tasteSetupStep?.classList.add('hidden');
-        tasteImportStep?.classList.add('hidden');
-      } else {
-        tasteLoginStep?.classList.add('hidden');
-        setOnboardingStage(onboardingStage);
-      }
+      tasteLoginStep?.classList.toggle('hidden', !accountCheckFinished || Boolean(user));
+      tasteSetupStep?.classList.toggle('hidden', !accountCheckFinished || !user);
       if (user && tasteOnboardingStatus) {
         tasteOnboardingStatus.textContent = `Signed in as ${user.displayName || user.email || 'your Google account'}`;
       }
     };
-
-    const onboardingCompleteOnThisDevice = safeStorageGet('melopair_onboarding_done') === 'true'
-      || safeStorageGet('melopair_taste_setup_v1') === 'true';
-    const parseLocalJson = (key, fallback) => { try { return JSON.parse(safeStorageGet(key) || JSON.stringify(fallback)); } catch { return fallback; } };
-    const backupProfile = parseLocalJson('echo_user_data_backup', null);
-    const savedTaste = parseLocalJson('melopair_taste_preferences', {});
-    const savedImported = parseLocalJson('melopair_imported_listening_memory', []);
-    const savedLocalHistory = parseLocalJson('echo_listening_history', []);
-    const hasExistingLocalProfile = Boolean(
-      (Array.isArray(savedLocalHistory) && savedLocalHistory.length)
-      || (Array.isArray(savedImported) && savedImported.length)
-      || (savedTaste && Object.keys(savedTaste).length)
-      || (backupProfile && ((Array.isArray(backupProfile.history) && backupProfile.history.length)
-        || (Array.isArray(backupProfile.favorites) && backupProfile.favorites.length)
-        || (Array.isArray(backupProfile.favoriteTracks) && backupProfile.favoriteTracks.length)
-        || (Array.isArray(backupProfile.importedListeningMemory) && backupProfile.importedListeningMemory.length)
-        || (backupProfile.tastePreferences && Object.keys(backupProfile.tastePreferences).length)))
-      || (String(safeStorageGet('echo_profile_name') || '').trim() && safeStorageGet('echo_profile_name') !== 'Local listener')
-    );
-    profileInitializationPromise = window.echoApi?.initializeFreshProfile
-      ? window.echoApi.initializeFreshProfile({ hasExistingProfile: hasExistingLocalProfile, onboardingComplete: onboardingCompleteOnThisDevice })
-        .catch(error => { console.warn('[Profile] Could not initialize first-run state:', error); return { showWelcomeWizard: false }; })
-      : Promise.resolve({ showWelcomeWizard: false });
 
     if (!tasteSetupComplete()) updateTasteOnboarding(null, false);
     const onboardingAccountCheckTimeout = setTimeout(() => {
@@ -4059,58 +3289,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (window.echoApi?.getFirebaseUser) {
-      profileInitializationPromise
-        .then(profileState => {
-          if (profileState?.showWelcomeWizard) {
-            forceWelcomeOnboarding = true;
-            onboardingReplay = true;
-            onboardingLaunchTour = true;
-            onboardingStage = 'taste';
-            tastePreferences = {};
-            importedListeningMemory = [];
-            try {
-              for (const key of ['melopair_onboarding_done', 'melopair_taste_setup_v1', 'melopair_taste_preferences', 'melopair_imported_listening_memory']) {
-                localStorage.removeItem(key);
-              }
-            } catch (error) { console.warn('[Profile] Could not clear stale first-run taste state:', error); }
-            document.querySelectorAll('.taste-options .taste-chip.selected').forEach(chip => {
-              chip.classList.remove('selected');
-              chip.setAttribute('aria-pressed', 'false');
-            });
-            restoreTasteSelections();
-            setOnboardingStage('taste');
-            updateTasteOnboarding(null, true);
-          }
-          return window.echoApi.getFirebaseUser();
-        })
+      window.echoApi.getFirebaseUser()
         .then(user => {
           clearTimeout(onboardingAccountCheckTimeout);
           renderFirebaseAccount(user);
         })
         .catch(error => console.warn('[Firebase Auth] Could not load sign-in state:', error));
     } else {
-      profileInitializationPromise.then(profileState => {
-        clearTimeout(onboardingAccountCheckTimeout);
-        if (profileState?.showWelcomeWizard) {
-          forceWelcomeOnboarding = true;
-          onboardingReplay = true;
-          onboardingLaunchTour = true;
-          tastePreferences = {};
-          importedListeningMemory = [];
-          try {
-            for (const key of ['melopair_onboarding_done', 'melopair_taste_setup_v1', 'melopair_taste_preferences', 'melopair_imported_listening_memory']) {
-              localStorage.removeItem(key);
-            }
-          } catch (error) { console.warn('[Profile] Could not clear stale first-run taste state:', error); }
-          document.querySelectorAll('.taste-options .taste-chip.selected').forEach(chip => {
-            chip.classList.remove('selected');
-            chip.setAttribute('aria-pressed', 'false');
-          });
-          restoreTasteSelections();
-          setOnboardingStage('taste');
-        }
-        updateTasteOnboarding(null, true);
-      });
+      clearTimeout(onboardingAccountCheckTimeout);
+      updateTasteOnboarding(null, true);
     }
 
     googleSignInBtn?.addEventListener('click', async () => {
@@ -4152,272 +3339,32 @@ document.addEventListener('DOMContentLoaded', () => {
       googleSignInBtn?.click();
     });
 
-    const bindTasteChip = (chip) => {
-      if (chip.dataset.boundTasteChip) return;
-      chip.dataset.boundTasteChip = 'true';
+    document.querySelectorAll('.taste-options[data-taste-group] .taste-chip').forEach((chip) => {
       chip.addEventListener('click', () => {
         chip.classList.toggle('selected');
         chip.setAttribute('aria-pressed', chip.classList.contains('selected') ? 'true' : 'false');
       });
-    };
-    document.querySelectorAll('.taste-options[data-taste-group] .taste-chip').forEach(bindTasteChip);
-    const restoreTasteSelections = () => {
-      for (const group of ['languages', 'moods', 'artists', 'habits', 'genres']) {
-        const values = Array.isArray(tastePreferences[group]) ? tastePreferences[group] : [];
-        const root = document.querySelector(`.taste-options[data-taste-group="${group}"]`);
-        for (const value of values) {
-          let chip = [...(root?.querySelectorAll('.taste-chip') || [])].find(item => (item.dataset.value || item.textContent).toLocaleLowerCase() === String(value).toLocaleLowerCase());
-          if (!chip && group === 'artists' && root) {
-            chip = document.createElement('button'); chip.type = 'button'; chip.className = 'taste-chip'; chip.dataset.value = value; chip.textContent = value; root.append(chip); bindTasteChip(chip);
-          }
-          if (chip) { chip.classList.add('selected'); chip.setAttribute('aria-pressed', 'true'); }
-        }
-      }
-    };
-    restoreTasteSelections();
-
-    const artistSearch = document.getElementById('mpArtistSearch');
-    artistSearch?.addEventListener('input', () => {
-      const query = artistSearch.value.trim().toLocaleLowerCase();
-      document.querySelectorAll('[data-taste-group="artists"] .taste-chip').forEach(chip => {
-        chip.classList.toggle('hidden', Boolean(query) && !chip.textContent.toLocaleLowerCase().includes(query));
-      });
     });
-    const addCustomArtist = () => {
-      const input = document.getElementById('mpCustomArtistInput');
-      const value = String(input?.value || '').trim().replace(/\s+/g, ' ');
-      if (!value) return;
-      const group = document.querySelector('[data-taste-group="artists"]');
-      const existing = [...(group?.querySelectorAll('.taste-chip') || [])].find(chip => chip.dataset.value.toLocaleLowerCase() === value.toLocaleLowerCase());
-      if (existing) {
-        existing.classList.add('selected');
-        existing.setAttribute('aria-pressed', 'true');
-      } else if (group) {
-        const chip = document.createElement('button');
-        chip.type = 'button'; chip.className = 'taste-chip selected'; chip.dataset.value = value; chip.textContent = value; chip.setAttribute('aria-pressed', 'true');
-        group.append(chip); bindTasteChip(chip);
-      }
-      if (input) input.value = '';
-    };
-    document.getElementById('mpAddArtistBtn')?.addEventListener('click', addCustomArtist);
-    document.getElementById('mpCustomArtistInput')?.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addCustomArtist(); } });
 
-    const persistTasteProfile = () => {
-      try {
-        localStorage.setItem('melopair_taste_preferences', JSON.stringify(tastePreferences));
-        localStorage.setItem('melopair_imported_listening_memory', JSON.stringify(importedListeningMemory));
-      } catch (error) { console.warn('[Taste] Could not persist local taste profile:', error); }
+    tasteFinishBtn?.addEventListener('click', () => {
+      const selected = (group) => Array.from(document.querySelectorAll(`.taste-options[data-taste-group="${group}"] .taste-chip.selected`))
+        .map(chip => chip.dataset.value || chip.textContent.trim());
+      const preferences = { artists: selected('artists'), moods: selected('moods'), genres: selected('genres'), updatedAt: Date.now() };
+      if (!preferences.genres.length) {
+        if (tasteSetupStatus) tasteSetupStatus.textContent = 'Choose at least one style so we can shape your first mix.';
+        return;
+      }
+      tastePreferences = preferences;
+      localStorage.setItem('melopair_taste_preferences', JSON.stringify(preferences));
+      localStorage.setItem('melopair_taste_setup_v1', 'true');
       savePersistentState();
-    };
-    const finishOnboarding = (startTour = true) => {
-      try {
-        localStorage.setItem('melopair_onboarding_done', 'true');
-        localStorage.setItem('melopair_taste_setup_v1', 'true');
-      } catch (error) { console.warn('[Taste] Could not save onboarding completion:', error); }
-      forceWelcomeOnboarding = false;
-      void window.echoApi?.markOnboardingComplete?.(true);
-      onboardingReplay = false;
       tasteOnboarding?.classList.add('hidden');
-      persistTasteProfile();
+      if (tasteSetupStatus) tasteSetupStatus.textContent = '';
       if (discSubtitle) discSubtitle.textContent = 'A listening feed shaped by your taste and what you play';
       void loadPersonalizedFeed(true);
       performSearch('trending global songs');
-      if (startTour && onboardingLaunchTour) startFeatureTour();
-    };
-
-    function parseTasteCsv(text) {
-      const rows = []; let row = []; let cell = ''; let quoted = false;
-      for (let i = 0; i < text.length; i++) {
-        const ch = text[i];
-        if (ch === '"' && quoted && text[i + 1] === '"') { cell += '"'; i++; }
-        else if (ch === '"') quoted = !quoted;
-        else if (ch === ',' && !quoted) { row.push(cell); cell = ''; }
-        else if ((ch === '\n' || ch === '\r') && !quoted) { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
-        else cell += ch;
-      }
-      if (cell || row.length) { row.push(cell); rows.push(row); }
-      if (rows.length < 2) return [];
-      const headers = rows.shift().map(value => value.trim().toLocaleLowerCase());
-      const field = (...names) => headers.findIndex(header => names.some(name => header.includes(name)));
-      const titleI = field('track name', 'trackname', 'song', 'track title', 'title', 'name');
-      const artistI = field('artist name', 'artistname', 'artist', 'artists', 'subtitle');
-      const albumI = field('album name', 'album');
-      return rows.map(cells => ({ title: cells[titleI] || '', artist: cells[artistI] || '', album: cells[albumI] || '' }));
-    }
-    const normalizeImportedTrack = (item) => {
-      if (typeof item === 'string') item = { title: item };
-      const title = String(item?.title || item?.trackName || item?.track?.name || item?.name || '').trim();
-      const artistField = item?.artist || item?.artistName || item?.['Artist Name(s)'] || item?.subtitles || '';
-      const artist = Array.isArray(artistField) ? artistField.map(a => typeof a === 'string' ? a : a?.name).filter(Boolean).join(', ') : String(artistField || item?.subtitles?.map?.(a => a.name).join(', ') || '').trim();
-      if (!title) return null;
-      const cleanTitle = title.replace(/^(?:played|watched)\s+/i, '').replace(/\s+-\s+topic\s*$/i, '').replace(/^[-–—]\s*/, '').trim();
-      if (!artist && cleanTitle.length > 70) return null;
-      return { title: cleanTitle, artist, album: String(item.album || item.albumName || ''), source: 'import', importedAt: Date.now() };
-    };
-    function importListeningMemory(parsedTracks, sourceApp = 'Other app') {
-      const normalized = (Array.isArray(parsedTracks) ? parsedTracks : []).map(normalizeImportedTrack).filter(Boolean);
-      const unique = new Map();
-      for (const track of normalized) {
-        const key = `${track.title}|${track.artist}`.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-        if (!key || unique.has(key)) continue;
-        unique.set(key, track);
-      }
-      const imported = [...unique.values()];
-      if (!imported.length) return 0;
-      const previous = new Map(importedListeningMemory.map(track => [`${track.title}|${track.artist}`.toLocaleLowerCase(), track]));
-      for (const track of imported) previous.set(`${track.title}|${track.artist}`.toLocaleLowerCase(), { ...track, sourceApp });
-      importedListeningMemory = [...previous.values()].slice(-2000);
-      const artistCounts = new Map();
-      for (const track of imported) {
-        const candidates = String(track.artist || '').split(/\s*(?:,|&| feat\.? | ft\.? | x )\s*/i).filter(Boolean);
-        if (candidates.length) artistCounts.set(candidates[0], (artistCounts.get(candidates[0]) || 0) + 1);
-        else if (!track.artist && !/[–—]/.test(track.title)) artistCounts.set(track.title, (artistCounts.get(track.title) || 0) + 1);
-      }
-      const topArtists = [...artistCounts].sort((a,b) => b[1]-a[1]).slice(0, 20).map(([name]) => name);
-      const affinity = (() => { try { return JSON.parse(safeStorageGet('echo_artist_affinity') || '{}') || {}; } catch { return {}; } })();
-      for (const [artist, count] of artistCounts) affinity[artist] = (Number(affinity[artist]) || 0) + count;
-      try { localStorage.setItem('echo_artist_affinity', JSON.stringify(affinity)); } catch {}
-      const inferLanguage = text => {
-        const value = text.toLocaleLowerCase();
-        if (/karan aujla|sidhu moose|diljit|ap dhillon|shubh|punjabi|ikky/.test(value)) return 'Punjabi';
-        if (/arijit|pritam|bollywood|hindi/.test(value)) return 'Hindi';
-        if (/taylor swift|weeknd|drake|billie eilish|english/.test(value)) return 'English / International';
-        return '';
-      };
-      const languages = new Set(tastePreferences.languages || []);
-      const moods = new Set(tastePreferences.moods || []);
-      for (const track of imported) {
-        const lang = inferLanguage(`${track.title} ${track.artist}`); if (lang) languages.add(lang);
-        const text = `${track.title} ${track.artist}`.toLocaleLowerCase();
-        if (/sad|heartbreak|alone|cry|hurt/.test(text)) moods.add('Heartbreak & Sad');
-        if (/party|dance|club|energy|pump/.test(text)) moods.add('High-Energy & Party');
-        if (/love|romantic|heart/.test(text)) moods.add('Romantic & Soulful');
-      }
-      tastePreferences = { ...tastePreferences, artists: [...new Set([...(tastePreferences.artists || []), ...topArtists])].slice(0, 100), languages: [...languages], moods: [...moods], importedFrom: sourceApp, importedTrackCount: importedListeningMemory.length, updatedAt: Date.now() };
-      persistTasteProfile();
-      const summary = document.getElementById('mpImportSummary');
-      const message = `Imported ${imported.length} tracks · Top artists: ${topArtists.slice(0, 3).join(', ') || 'profile updated'}`;
-      if (summary) summary.textContent = message;
-      const setupStatus = document.getElementById('tasteImportStatus'); if (setupStatus) setupStatus.textContent = message;
-      void loadPersonalizedFeed(true);
-      return imported.length;
-    }
-
-    const importText = (text, sourceHint = 'Imported file') => {
-      let tracks = [];
-      const trimmed = String(text || '').trim();
-      if (!trimmed) return 0;
-      if (/\.json$/i.test(sourceHint) || /^[\[{]/.test(trimmed)) {
-        try {
-          const data = JSON.parse(trimmed);
-          const list = Array.isArray(data) ? data : (data.tracks || data.items || data.history || data.songs || data.library || []);
-          tracks = Array.isArray(list) ? list.filter(item => {
-            const desc = `${item.title || ''} ${item.header || ''} ${item.titleUrl || ''} ${(item.subtitles || []).map?.(part => part.name).join(' ') || ''}`;
-            if (/watch.?history/i.test(sourceHint)) return /music|song|audio|official video|topic/i.test(desc) || Boolean(item.subtitles?.length);
-            return true;
-          }) : [];
-          if (!tracks.length && data?.track) tracks = [data];
-        } catch (error) { console.warn('[Taste Import] JSON parse failed:', error); }
-      } else if (/\.csv$/i.test(sourceHint) || /,/.test(trimmed.split(/\r?\n/)[0] || '')) tracks = parseTasteCsv(trimmed);
-      else tracks = trimmed.split(/\r?\n/).map(line => {
-        const parts = line.split(/\s+[—–-]\s+/);
-        return parts.length > 1 ? { title: parts.slice(0, -1).join(' - ').trim(), artist: parts[parts.length - 1].trim() } : { title: '', artist: line.trim() };
-      }).filter(row => row.title || row.artist).map(row => row.title ? row : { title: row.artist, artist: '' });
-      const source = /spotify|exportify|streaming.?history/i.test(sourceHint) ? 'Spotify' : /youtube|takeout|watch.?history/i.test(sourceHint) ? 'YouTube Music' : /apple/i.test(sourceHint) ? 'Apple Music' : sourceHint;
-      return importListeningMemory(tracks, source);
-    };
-    const importFileInput = document.getElementById('mpTasteFileInput');
-    importFileInput?.addEventListener('change', async () => {
-      const file = importFileInput.files?.[0]; if (!file) return;
-      const status = document.getElementById('tasteImportStatus');
-      try {
-        const count = importText(await file.text(), file.name);
-        if (status && !count) status.textContent = 'No song or artist rows were found. Try a Spotify/YouTube export or paste a list.';
-        else if (status) status.textContent = `Imported ${count} entries from ${file.name}.`;
-      } catch (error) { if (status) status.textContent = 'Could not read that file. Try CSV, JSON, or plain text.'; console.warn('[Taste Import] File read failed:', error); }
-      importFileInput.value = '';
+      showToast('Your listening feed is ready');
     });
-    document.getElementById('mpImportPasteBtn')?.addEventListener('click', () => {
-      const box = document.getElementById('mpTastePaste'); const count = importText(box?.value || '', 'Pasted list');
-      const status = document.getElementById('tasteImportStatus');
-      if (status) status.textContent = count ? `Imported ${count} entries from your pasted list.` : 'Paste one artist or song per line to import.';
-      if (box && count) box.value = '';
-    });
-
-    const step2 = () => { onboardingReplay = true; setOnboardingStage('import'); tasteOnboarding?.classList.remove('hidden'); };
-    tasteFinishBtn?.addEventListener('click', () => {
-      const selected = group => [...document.querySelectorAll(`.taste-options[data-taste-group="${group}"] .taste-chip.selected`)].map(chip => chip.dataset.value || chip.textContent.trim());
-      const artists = selected('artists');
-      if (artists.length < 3) { if (tasteSetupStatus) tasteSetupStatus.textContent = 'Pick at least three favorite artists, or skip setup for now.'; return; }
-      tastePreferences = { ...tastePreferences, artists, languages: selected('languages'), moods: selected('moods'), genres: tastePreferences.genres || [], habits: selected('habits'), updatedAt: Date.now() };
-      persistTasteProfile();
-      if (tasteSetupStatus) tasteSetupStatus.textContent = '';
-      step2();
-    });
-    document.getElementById('mpImportBackBtn')?.addEventListener('click', () => { onboardingReplay = true; setOnboardingStage('taste'); });
-    document.getElementById('mpFinishOnboardingBtn')?.addEventListener('click', finishOnboarding);
-    document.getElementById('mpSkipOnboardingBtn')?.addEventListener('click', () => finishOnboarding(false));
-    document.getElementById('settingsImportTasteBtn')?.addEventListener('click', () => { openOnboarding('import'); });
-    document.getElementById('settingsFeatureTourBtn')?.addEventListener('click', () => {
-      onboardingReplay = true;
-      onboardingLaunchTour = true;
-      forceWelcomeOnboarding = true;
-      onboardingStage = 'taste';
-      try {
-        localStorage.removeItem('melopair_onboarding_done');
-        localStorage.removeItem('melopair_taste_setup_v1');
-      } catch (error) { console.warn('[Taste] Could not reset welcome progress:', error); }
-      void window.echoApi?.markOnboardingComplete?.(false);
-      setOnboardingStage('taste');
-      restoreTasteSelections();
-      tasteOnboarding?.classList.remove('hidden');
-      savePersistentState();
-    });
-
-    const tourSteps = [
-      { target: '#viewDiscovery', title: 'Listen Now & Smart Shelves', copy: 'Your personalized home feed, shaped by your chosen styles, languages, and listening taste.' },
-      { target: '#appleHeaderSearchInput', title: 'Instant Search', copy: 'Press Ctrl+K anywhere to find tracks, artists, and albums.' },
-      { target: '#dockLyricsBtn', title: 'Kinetic Lyrics', copy: 'Open full-screen lyrics and use the sync controls when a line needs realignment.' },
-      { target: '#navStudioBtn', title: 'Studio FX & Spatial Audio', copy: 'Shape the sound with Studio FX, EQ, and spatial audio controls.' },
-      { target: '#navPartyRoomsBtn', title: 'Rooms · Listen Together', copy: 'Start a Room to listen and keep playback synced with friends.' },
-      { target: '#dockQueueBtn', title: 'Crossfade & Smart Queue', copy: 'See what plays next and explore the autoplay radio queue.' }
-    ];
-    let tourIndex = 0;
-    const spot = document.getElementById('mpTourSpotlight'); const card = document.getElementById('mpTourCard');
-    const renderTourStep = () => {
-      const item = tourSteps[tourIndex]; const target = document.querySelector(item.target);
-      if (!target) return;
-      if (item.target === '#viewDiscovery' && !target.classList.contains('active')) document.getElementById('navDiscoveryBtn')?.click();
-      target.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-      document.getElementById('mpTourStepLabel').textContent = `STEP ${tourIndex + 1} OF ${tourSteps.length}`;
-      document.getElementById('mpTourTitle').textContent = item.title;
-      document.getElementById('mpTourCopy').textContent = item.copy;
-      document.getElementById('mpTourBackBtn').disabled = tourIndex === 0;
-      document.getElementById('mpTourNextBtn').textContent = tourIndex === tourSteps.length - 1 ? 'Finish' : 'Next';
-      requestAnimationFrame(() => {
-        const rect = target.getBoundingClientRect();
-        spot.style.left = `${Math.max(8, rect.left - 8)}px`; spot.style.top = `${Math.max(8, rect.top - 8)}px`;
-        spot.style.width = `${Math.min(innerWidth - Math.max(8, rect.left - 8), rect.width + 16)}px`; spot.style.height = `${Math.min(innerHeight - Math.max(8, rect.top - 8), rect.height + 16)}px`;
-        card.classList.toggle('mp-tour-card-above', rect.top + rect.height / 2 > innerHeight * .62);
-        const cardWidth = Math.min(360, innerWidth - 32); card.style.width = `${cardWidth}px`;
-        const left = Math.max(16, Math.min(innerWidth - cardWidth - 16, rect.left + rect.width / 2 - cardWidth / 2));
-        card.style.left = `${left}px`;
-        card.style.top = card.classList.contains('mp-tour-card-above') ? `${Math.max(16, rect.top - card.offsetHeight - 24)}px` : `${Math.min(innerHeight - card.offsetHeight - 16, rect.bottom + 24)}px`;
-      });
-    };
-    function startFeatureTour() {
-      tourIndex = 0;
-      mpFeatureTour?.classList.remove('hidden');
-      renderTourStep();
-    }
-    const closeTour = () => mpFeatureTour?.classList.add('hidden');
-    document.getElementById('mpTourBackBtn')?.addEventListener('click', () => { if (tourIndex) tourIndex--; renderTourStep(); });
-    document.getElementById('mpTourNextBtn')?.addEventListener('click', () => { if (tourIndex >= tourSteps.length - 1) closeTour(); else { tourIndex++; renderTourStep(); } });
-    document.getElementById('mpTourSkipBtn')?.addEventListener('click', closeTour);
-    window.addEventListener('resize', () => { if (!mpFeatureTour?.classList.contains('hidden')) renderTourStep(); });
-
-    // An imported history export informs affinity weights; it is kept distinct
-    // from songs actually played in MeloPair so the recent-play shelf stays true.
 
     googleSignOutBtn?.addEventListener('click', async () => {
       googleSignOutBtn.disabled = true;
@@ -4674,18 +3621,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderAmbientCloudFrame() {
     if (!ambientCloudCanvas || !ambientCloudCtx) return;
 
-    // Only render when lyrics view is active and NOT in OLED Black mode.
-    // If inactive or in OLED Black mode, stop the animation loop completely to avoid CPU/GPU waste.
+    // Only render when lyrics view is active and NOT in OLED Black mode
     const isLyricsActive = viewLyrics && viewLyrics.classList.contains('active');
     if (!isLyricsActive || isOledBgMode) {
-      ambientCloudAnimId = null;
+      ambientCloudAnimId = requestAnimationFrame(renderAmbientCloudFrame);
       return;
     }
 
     const w = ambientCloudCanvas.width;
     const h = ambientCloudCanvas.height;
     if (w === 0 || h === 0) {
-      ambientCloudAnimId = null;
+      ambientCloudAnimId = requestAnimationFrame(renderAmbientCloudFrame);
       return;
     }
 
@@ -4758,14 +3704,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function resetLyricsView(track) {
     lyricsRequestId++; // Invalidate any in-flight lyrics requests
     lyricsData = [];
-    lyricsDataIsSynced = false;
     activeLyricIndex = -1;
-    plainLyricsCanProgress = false;
-    rawPlainLyricsText = null;
-    autoIntroOffset = 0;
-    lastLrcResultDuration = 0;
-    lastFetchedLyricsDuration = 0;
-    computeTotalLyricOffset();
     if (lyricsStatusBadge) lyricsStatusBadge.textContent = 'Searching...';
 
     // Update dynamic background art and corner meta
@@ -4815,78 +3754,50 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (response.synced) {
-      lastLrcResultDuration = Number(response.duration) || 0;
-      autoIntroOffset = 0;
       parseLrcLyrics(lyrics);
       if (!lyricsDataIsSynced || lyricsData.length === 0) {
         const plainFallback = String(response.plainLyrics || '').trim();
         if (!plainFallback) {
-          lastLrcResultDuration = 0;
-          autoIntroOffset = 0;
           showNoLyricsFound(track);
-          computeTotalLyricOffset();
           return false;
         }
-        lastLrcResultDuration = 0;
-        autoIntroOffset = 0;
         parsePlainLyricsWithPacing(plainFallback, duration);
         if (lyricsData.length === 0) {
           showNoLyricsFound(track);
           return false;
         }
         if (lyricsStatusBadge) lyricsStatusBadge.textContent = 'Plain Lyrics';
-        computeTotalLyricOffset();
-      } else {
-        const sourceLabel = response.source === 'YouTube Synced' ? 'YouTube Synced ✓' : 'Synced LRCLIB ✓';
-        if (lyricsStatusBadge) lyricsStatusBadge.textContent = sourceLabel;
-        const deckDuration = Number.isFinite(activeAudio?.duration) && activeAudio.duration > 0
-          ? activeAudio.duration
-          : 0;
-        if (deckDuration > 0) applyAutoIntroOffset(deckDuration);
-        else computeTotalLyricOffset();
+      } else if (lyricsStatusBadge) {
+        lyricsStatusBadge.textContent = 'Synced LRCLIB ✓';
       }
     } else {
-      lastLrcResultDuration = 0;
-      autoIntroOffset = 0;
       parsePlainLyricsWithPacing(lyrics, duration);
       if (lyricsData.length === 0) {
         showNoLyricsFound(track);
         return false;
       }
       if (lyricsStatusBadge) lyricsStatusBadge.textContent = 'Plain Lyrics';
-      computeTotalLyricOffset();
     }
 
     renderLyricsStream();
     activeLyricIndex = -1;
-    if (!lyricsDataIsSynced) renderPlainImmersiveLyrics(rawPlainLyricsText || lyricsData.map(line => line.text).join('\n'));
-    else renderImmersiveLyrics(-1);
-    realignLyrics('auto', false);
+    const deckTime = Number(activeAudio?.currentTime);
+    if (Number.isFinite(deckTime)) syncLyricsWithTime(deckTime);
     window.renderNowPlayingLyrics?.();
     broadcastEchoRoomState(true);
     return true;
   }
 
-  async function fetchLyrics(track, verifiedStreamDuration = null) {
+  async function fetchLyrics(track) {
     if (!window.echoApi || !track) return;
     const myId = ++lyricsRequestId;
-    const matchingActiveDeckDuration = activeAudio
-      && activeAudio.dataset?.trackId === String(track.id)
-      && activeAudio.readyState >= 1
-      && Number.isFinite(activeAudio.duration)
-      && activeAudio.duration > 10
-      ? activeAudio.duration
-      : 0;
-    const explicitVerifiedDuration = Number(verifiedStreamDuration);
-    const effectiveDuration = Number.isFinite(explicitVerifiedDuration) && explicitVerifiedDuration > 10
-      ? explicitVerifiedDuration
-      : (matchingActiveDeckDuration || ((track.duration && track.duration > 10 && track.duration !== 200)
-          ? track.duration
-          : (track.durationSec && track.durationSec > 10 && track.durationSec !== 200
-              ? track.durationSec
-              : (track.duration || 0))));
-    const resolvedDuration = effectiveDuration;
-    lastFetchedLyricsDuration = Number(effectiveDuration) || 0;
+    const resolvedDuration = (track.duration && track.duration > 10 && track.duration !== 200)
+      ? track.duration
+      : (track.durationSec && track.durationSec > 10 && track.durationSec !== 200
+          ? track.durationSec
+          : (activeAudio && isFinite(activeAudio.duration) && activeAudio.duration > 10
+              ? activeAudio.duration
+              : (track.duration || 0)));
 
     lyricsData = [];
     lyricsDataIsSynced = false;
@@ -4906,33 +3817,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (applyLyricsResponse(track, cached, resolvedDuration)) return;
     }
 
-    const streamVideoId = (track.id && !track.id.startsWith('saavn_') && !track.id.startsWith('Dracula-'))
-      ? track.id
-      : (activeAudio?.dataset?.trackId && !activeAudio.dataset.trackId.startsWith('saavn_')
-          ? activeAudio.dataset.trackId
-          : null);
-
     try {
-      let timeoutId;
-      const timedOut = Symbol('lyrics-timeout');
-      let response;
-      try {
-        response = await Promise.race([window.echoApi.getLyrics({
-          title: track.title,
-          artist: track.artist,
-          duration: effectiveDuration,
-          videoId: streamVideoId,
-          trackId: track.id,
-          source: track.source || (streamVideoId ? 'youtube' : null),
-          hasManualLyricOffset: hasSavedManualLyricOffset
-        }), new Promise(resolve => { timeoutId = setTimeout(() => resolve(timedOut), 45000); })]);
-      } finally {
-        clearTimeout(timeoutId);
-      }
-      if (response === timedOut) {
-        if (myId === lyricsRequestId) showNoLyricsFound(track);
-        return;
-      }
+      const response = await window.echoApi.getLyrics({
+        title: track.title,
+        artist: track.artist,
+        duration: resolvedDuration
+      });
 
       if (myId !== lyricsRequestId) {
         console.log(`[Lyrics] Stale lyrics discarded for "${track.title}" (req #${myId} vs current #${lyricsRequestId})`);
@@ -4948,45 +3838,64 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function parsePlainLyricsWithPacing(plainText) {
+  // Paced fallback for plain/unsynced lyrics (Tier 3) so they never freeze on line 1
+  function parsePlainLyricsWithPacing(plainText, trackDuration) {
     lyricsDataIsSynced = false;
-    plainLyricsCanProgress = false;
+    lyricsData = [];
     activeLyricIndex = -1;
-    rawPlainLyricsText = plainText;
-    // Plain text has no timing data. Keep it readable and manually scrollable;
-    // never manufacture timestamps from track duration and imply vocal sync.
-    lyricsData = String(plainText || '').replace(/\r\n?/g, '\n').split('\n')
-      .map(text => text.trim())
-      .filter(text => text.length > 0 && !/^\[(?:by|offset|re|ve):/i.test(text))
-      .map(text => ({
-        time: 0,
-        endTime: 0,
-        duration: 0,
-        text,
-        words: text.split(/\s+/).filter(Boolean).map(word => ({ word, time: 0 }))
-      }));
-    updatePlainLyricsTimestamps(activeAudio?.duration);
-  }
+    // Lyrics APIs commonly return LF-only text, while Windows files use CRLF.
+    // Normalize first so a whole song is never rendered as one oversized line.
+    const rawLines = String(plainText || '').replace(/\r\n?/g, '\n').split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0 && !l.startsWith('[by:') && !l.startsWith('[offset:') && !l.startsWith('[re:') && !l.startsWith('[ve:'));
 
-  function updatePlainLyricsTimestamps(duration) {
-    const trackDuration = Number(duration);
-    if (lyricsDataIsSynced || !lyricsData.length || !Number.isFinite(trackDuration) || trackDuration <= 0) return false;
-    const introPad = Math.min(10, Math.max(4, trackDuration * 0.045));
-    const outroPad = Math.min(12, Math.max(5, trackDuration * 0.05));
-    const availableSpan = Math.max(0, trackDuration - introPad - outroPad);
-    const denominator = Math.max(1, lyricsData.length - 1);
-    lyricsData.forEach((line, index) => {
-      const lineTime = introPad + (index / denominator) * availableSpan;
-      line.time = lineTime;
-      line.endTime = index + 1 < lyricsData.length
-        ? introPad + ((index + 1) / denominator) * availableSpan
-        : trackDuration - outroPad;
-      line.duration = Math.max(0, line.endTime - line.time);
-      line.words = String(line.text || '').split(/\s+/).filter(Boolean).map(word => ({ word, time: lineTime }));
+    if (rawLines.length === 0) return;
+
+    const dur = (trackDuration && trackDuration > 20) ? trackDuration : (activeAudio.duration || currentTrack?.duration || 214);
+    const introPadding = Math.min(8, Math.max(3, dur * 0.04));
+    const outroPadding = Math.min(12, Math.max(5, dur * 0.06));
+    const usableDur = Math.max(15, dur - introPadding - outroPadding);
+    const lineInterval = usableDur / rawLines.length;
+
+    lyricsData = rawLines.map((text, idx) => {
+      const startTime = introPadding + (idx * lineInterval);
+      const endTime = introPadding + ((idx + 1) * lineInterval);
+      const lineDur = Math.min(8.0, Math.max(1.2, endTime - startTime));
+      const wordList = text.split(/\s+/).filter(w => w.length > 0);
+
+      let kineticTokens = [];
+      if (typeof EmojiMapper !== 'undefined' && EmojiMapper.processKineticLine) {
+        kineticTokens = EmojiMapper.processKineticLine(wordList, idx);
+      } else {
+        kineticTokens = wordList.map((w, wIdx) => ({
+          word: w,
+          emoji: null,
+          isItalic: (wIdx === wordList.length - 1 && wordList.length >= 2) || /[!,]$/.test(w)
+        }));
+      }
+
+      const totalWeight = wordList.reduce((acc, w) => acc + Math.max(1, w.length), 0);
+      const cadenceSpan = lineDur * 0.75;
+      let elapsed = 0;
+
+      const words = kineticTokens.map((item) => {
+        const wTime = startTime + elapsed;
+        const wDur = (Math.max(1, item.word.length) / Math.max(1, totalWeight)) * cadenceSpan;
+        elapsed += wDur;
+        return {
+          ...item,
+          time: wTime
+        };
+      });
+
+      return {
+        time: startTime,
+        endTime: endTime,
+        duration: lineDur,
+        text: text,
+        words: words
+      };
     });
-    plainLyricsCanProgress = true;
-    if (lyricsStreamScroll) renderLyricsStream();
-    return true;
   }
 
   // Robust multi-format LRC Parser (supports Tier 1 word tags, Tier 2 line tags, multi-timestamps)
@@ -5084,10 +3993,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ? line.rawWordTokens.map(w => w.text)
         : line.text.split(/\s+/).filter(w => w.length > 0);
 
-      const emojiEngine = (typeof EmojiMapper !== 'undefined' && EmojiMapper) || (typeof window !== 'undefined' && window.EmojiMapper);
       let kineticTokens = [];
-      if (emojiEngine && emojiEngine.processKineticLine) {
-        kineticTokens = emojiEngine.processKineticLine(wordList, i);
+      if (typeof EmojiMapper !== 'undefined' && EmojiMapper.processKineticLine) {
+        kineticTokens = EmojiMapper.processKineticLine(wordList, i);
       } else {
         kineticTokens = wordList.map((w, idx) => ({
           word: w,
@@ -5103,9 +4011,20 @@ document.addEventListener('DOMContentLoaded', () => {
           time: line.rawWordTokens[idx].time
         }));
       } else {
-        // Line-only LRC has no word timestamps. Keep every word anchored to
-        // the real line timestamp instead of inventing a vocal cadence.
-        line.words = kineticTokens.map(item => ({ ...item, time: line.time }));
+        // Tier 2: Vocal cadence distribution across 75% of lineDuration weighted by character length
+        const totalWeight = wordList.reduce((acc, w) => acc + Math.max(1, w.length), 0);
+        const cadenceSpan = line.duration * 0.75;
+        let elapsed = 0;
+
+        line.words = kineticTokens.map((item) => {
+          const wTime = line.time + elapsed;
+          const wDur = (Math.max(1, item.word.length) / Math.max(1, totalWeight)) * cadenceSpan;
+          elapsed += wDur;
+          return {
+            ...item,
+            time: wTime
+          };
+        });
       }
     }
     lyricsDataIsSynced = lyricsData.length > 0;
@@ -5152,31 +4071,14 @@ document.addEventListener('DOMContentLoaded', () => {
     activeEl.className = 'imm-line imm-active';
     activeEl.setAttribute('data-index', index);
 
-    const activeLength = Array.from(activeLine.text || '').length;
-    container.classList.toggle('has-extra-long-active-line', activeLength > 52);
-    if (activeLength <= 28) {
-      activeEl.style.setProperty('--lyric-active-font-size', 'clamp(2.1rem, 3.6vw, 3.2rem)');
-      activeEl.style.setProperty('--lyric-active-line-height', '1.15');
-      activeEl.style.setProperty('--lyric-active-max-width', '94%');
-    } else if (activeLength <= 52) {
-      activeEl.style.setProperty('--lyric-active-font-size', 'clamp(1.7rem, 2.8vw, 2.5rem)');
-      activeEl.style.setProperty('--lyric-active-line-height', '1.18');
-      activeEl.style.setProperty('--lyric-active-max-width', '92%');
-    } else {
-      activeEl.style.setProperty('--kinetic-active-size', 'clamp(1.25rem, 1.9vw, 1.7rem)');
-      activeEl.style.setProperty('--lyric-active-line-height', '1.22');
-      activeEl.style.setProperty('--lyric-active-max-width', '88%');
-    }
-
     // Smart line-wrapping: if line length > 38 characters
     if (activeLine.text && activeLine.text.length > 38) {
       activeEl.classList.add('imm-long-line');
     }
 
     // Exact Versi Rendering with multi-language dictionary, fallback emoji, and editorial italic
-    const emojiEngine = (typeof EmojiMapper !== 'undefined' && EmojiMapper) || (typeof window !== 'undefined' && window.EmojiMapper);
-    if (emojiEngine && emojiEngine.renderKineticWords) {
-      const renderedHtml = emojiEngine.renderKineticWords(activeLine.text, isAutoEmojiEnabled, index);
+    if (typeof EmojiMapper !== 'undefined' && EmojiMapper.renderKineticWords) {
+      const renderedHtml = EmojiMapper.renderKineticWords(activeLine.text, isAutoEmojiEnabled, index);
       activeEl.innerHTML = renderedHtml;
 
       // Assign word timings to .imm-word spans for 60fps lighting and direct seeking
@@ -5245,14 +4147,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderImmersiveLyrics(index) {
-    const containers = [immersiveKineticLines, document.getElementById('npKineticLines')].filter(Boolean);
-    if (index === -1 && lyricsData.length > 0) {
-      containers.forEach(container => {
-        container.innerHTML = '<div class="imm-line imm-past imm-prev imm-placeholder">&nbsp;</div><div class="imm-line imm-active lyrics-waiting">•••</div><div class="imm-line imm-future imm-next imm-placeholder">&nbsp;</div>';
-      });
-      return;
-    }
-    if (lyricsData.length === 0 || index < 0 || index >= lyricsData.length) return;
+    if (lyricsData.length === 0) return;
+    if (index < 0 || index >= lyricsData.length) return;
+
     if (immersiveKineticLines) renderSingleKineticContainer(immersiveKineticLines, index);
     const npKineticLines = document.getElementById('npKineticLines');
     if (npKineticLines) renderSingleKineticContainer(npKineticLines, index);
@@ -5283,15 +4180,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const el = document.createElement('div');
       el.className = 'lyric-line-item';
       el.setAttribute('data-index', index);
-      if (lyricsDataIsSynced || plainLyricsCanProgress) el.setAttribute('data-time', line.time);
+      el.setAttribute('data-time', line.time);
       el.textContent = line.text;
 
-      if (lyricsDataIsSynced || plainLyricsCanProgress) {
-        el.addEventListener('click', () => {
-          seekAudioTo(line.time);
-          showToast(`Jumped to ${formatTime(line.time)}`);
-        });
-      }
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        seekAudioTo(line.time);
+        showToast(`Jumped to ${formatTime(line.time)}`);
+      });
 
       lyricsStreamScroll.appendChild(el);
     });
@@ -5348,79 +4244,143 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function getTrackLyricOffset(trackId) {
+    if (!trackId) return 0;
+    try {
+      const val = localStorage.getItem(`melopair_lyric_offset_${trackId}`);
+      return val ? parseFloat(val) : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function setTrackLyricOffset(trackId, offsetSec) {
+    if (!trackId) return;
+    try {
+      localStorage.setItem(`melopair_lyric_offset_${trackId}`, String(offsetSec));
+    } catch (e) {}
+  }
+
+  function nudgeTrackLyricOffset(trackId, deltaSec) {
+    if (!trackId) return 0;
+    const current = deltaSec === 0 ? 0 : getTrackLyricOffset(trackId) + deltaSec;
+    setTrackLyricOffset(trackId, current);
+    showToast(`Lyric Offset: ${current >= 0 ? '+' : ''}${current.toFixed(1)}s`);
+    return current;
+  }
+  window.getTrackLyricOffset = getTrackLyricOffset;
+  window.setTrackLyricOffset = setTrackLyricOffset;
+  window.nudgeTrackLyricOffset = nudgeTrackLyricOffset;
+
   // 60FPS High-Precision Audio & Kinetic Lyrics Synchronizer
   // ------------------------------------------------------------------------
-  function syncLyricsWithTime(_currentTime, force = false, allowPausedClockOverride = false) {
-    if (!Array.isArray(lyricsData) || lyricsData.length === 0) return;
-    // Plain lyrics use duration-spaced virtual line times only when the active
-    // deck has a real duration; otherwise they stay static and manually readable.
-    if (!lyricsDataIsSynced && !plainLyricsCanProgress) return;
+  function syncLyricsWithTime(currentTime) {
+    if (lyricsData.length === 0) return;
 
-    // Use only the active playback clock. Never advance synced lyrics while paused or buffering.
-    let mediaTime = 0;
-    if (isYtActive && ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
-      if (!isPlaying) return;
-      try { mediaTime = Number(ytPlayer.getCurrentTime()); } catch (_) { return; }
-    } else {
-      const activeDeck = activeAudio;
-      if (!activeDeck || activeDeck.ended || activeDeck.readyState < 3) {
-        if (!allowPausedClockOverride || !Number.isFinite(Number(_currentTime))) return;
-        mediaTime = Number(_currentTime);
-      } else if (activeDeck.paused) {
-        if (!allowPausedClockOverride || !Number.isFinite(Number(_currentTime))) return;
-        mediaTime = Number(_currentTime);
+    try {
+      const trackId = currentTrack?.id;
+      const trackOffset = getTrackLyricOffset(trackId);
+      const effectiveTime = currentTime + trackOffset + LYRIC_TIMING_OFFSET;
+      const isSynced = Boolean(lyricsDataIsSynced);
+      const firstLineTime = lyricsData[0]?.time;
+
+      // Instrumental intro detection: ONLY for verified synced lyrics with a finite intro lead
+      if (isSynced && Number.isFinite(firstLineTime) && firstLineTime > 2 && effectiveTime < firstLineTime) {
+        const remaining = Math.max(0, Math.ceil(firstLineTime - effectiveTime));
+        if (immersiveIntroIndicator) {
+          immersiveIntroIndicator.classList.remove('hidden');
+          if (immersiveIntroText) immersiveIntroText.textContent = `••• Instrumental Intro (${remaining}s) •••`;
+        }
+        if (lyricsIntroIndicator) {
+          lyricsIntroIndicator.classList.remove('hidden');
+          if (introText) introText.textContent = `••• Instrumental Intro (${remaining}s) •••`;
+        }
+        const kineticContainers = [immersiveKineticLines, document.getElementById('npKineticLines')].filter(Boolean);
+        const nextLyric = lyricsData[0]?.text || '';
+        if (activeLyricIndex !== -1 || kineticContainers.some(c => !c.querySelector('.imm-intro-stage'))) {
+          activeLyricIndex = -1;
+          kineticContainers.forEach(container => {
+            container.innerHTML = `
+              <div class="imm-intro-stage">
+                <div class="imm-intro-dots">
+                  <span class="dot"></span>
+                  <span class="dot"></span>
+                  <span class="dot"></span>
+                </div>
+                <div class="imm-intro-title">••• Instrumental Intro (${remaining}s) •••</div>
+                ${nextLyric ? `<div class="imm-intro-next">Next: ${escapeHtml(nextLyric)}</div>` : ''}
+              </div>
+            `;
+          });
+        } else {
+          const titleEl = document.querySelector('.imm-intro-title');
+          if (titleEl) titleEl.textContent = `••• Instrumental Intro (${remaining}s) •••`;
+        }
+        return;
       } else {
-        if (currentTrack?.id && activeDeck.dataset?.trackId && activeDeck.dataset.trackId !== String(currentTrack.id)) return;
-        mediaTime = Number(activeDeck.currentTime);
+        if (immersiveIntroIndicator) immersiveIntroIndicator.classList.add('hidden');
+        if (lyricsIntroIndicator) lyricsIntroIndicator.classList.add('hidden');
       }
-    }
-    if (!Number.isFinite(mediaTime) || mediaTime < 0) return;
 
-    const effectiveTime = mediaTime + currentSongLyricOffset;
-    const firstLineTime = Number(lyricsData[0]?.time) || 0;
-
-    // Before the first LRC timestamp, hold the center slot on a quiet neutral ellipsis.
-    if ((lyricsDataIsSynced || plainLyricsCanProgress) && effectiveTime < firstLineTime) {
-      if (activeLyricIndex !== -1 || !document.querySelector('#npKineticLines .lyrics-waiting')) {
-        activeLyricIndex = -1;
-        renderImmersiveLyrics(-1);
-        const stream = document.getElementById('npLyricsStream');
-        if (stream) stream.querySelectorAll('.np-lyric-line, .lyrics-line').forEach(el => el.classList.remove('active'));
+      // High-precision binary search: last index where line.time <= effectiveTime
+      let low = 0;
+      let high = lyricsData.length - 1;
+      let index = -1;
+      while (low <= high) {
+        const mid = (low + high) >>> 1;
+        if (lyricsData[mid].time <= effectiveTime) {
+          index = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
       }
-      return;
-    }
 
-    let index = -1;
-    if (lyricsDataIsSynced || plainLyricsCanProgress) {
-      for (let i = 0; i < lyricsData.length; i++) {
-        if (effectiveTime >= lyricsData[i].time) index = i;
-        else break;
+      // Fallback progression for plain / unsynced lyrics (e.g. Creez when unsynced)
+      if (!isSynced && index === -1 && lyricsData.length > 0) {
+        index = 0;
+      } else {
+        const hasTimestamps = lyricsData.some(l => l.time > 0);
+        if (!hasTimestamps && index === -1 && lyricsData.length > 0) {
+          const dur = (activeAudio && isFinite(activeAudio.duration) && activeAudio.duration > 10)
+            ? activeAudio.duration
+            : (currentTrack?.duration || 214);
+          index = Math.min(lyricsData.length - 1, Math.max(0, Math.floor((effectiveTime / Math.max(dur, 1)) * lyricsData.length)));
+        }
       }
-    }
-    if (index < 0) return;
 
-    const hasActiveKineticRendered = document.querySelector('#npKineticLines .imm-active');
-    if (index !== activeLyricIndex || !hasActiveKineticRendered || !document.querySelector('.np-lyric-line.active')) {
-      activeLyricIndex = index;
-      updateActiveLyricLine(index);
-      renderImmersiveLyrics(index);
-    }
-
-    const npStream = document.getElementById('npLyricsStream');
-    if (npStream) {
-      const streamLines = npStream.querySelectorAll('.np-lyric-line, .lyrics-line');
-      streamLines.forEach((el, idx) => el.classList.toggle('active', idx === index));
-      if (streamLines[index] && !window.isUserScrollingLyrics) {
-        streamLines[index].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // When line advances or initial seek
+      if (index !== -1 && (index !== activeLyricIndex || !document.querySelector('.np-lyric-line.active'))) {
+        activeLyricIndex = index;
+        updateActiveLyricLine(index);
+        renderImmersiveLyrics(index);
       }
-    }
 
-    // Word illumination follows the same active audio clock and therefore cannot run ahead.
-    document.querySelectorAll('.imm-word').forEach(el => {
-      const wordTime = Number.parseFloat(el.getAttribute('data-word-time'));
-      if (Number.isFinite(wordTime) && effectiveTime >= wordTime) el.classList.add('word-lit', 'lit');
-      else el.classList.remove('word-lit', 'lit');
-    });
+      // Update active line in #npLyricsStream
+      const npStream = document.getElementById('npLyricsStream');
+      if (npStream) {
+        const streamLines = npStream.querySelectorAll('.np-lyric-line, .lyrics-line');
+        streamLines.forEach((el, idx) => {
+          el.classList.toggle('active', idx === index);
+        });
+        if (index >= 0 && streamLines[index] && !window.isUserScrollingLyrics) {
+          streamLines[index].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+
+      // Sequential word illumination (fade + slide up) at 60fps across all kinetic views
+      const wordEls = document.querySelectorAll('.imm-word');
+      wordEls.forEach(el => {
+        const wt = parseFloat(el.getAttribute('data-word-time'));
+        if (effectiveTime >= wt) {
+          if (!el.classList.contains('word-lit')) el.classList.add('word-lit', 'lit');
+        } else {
+          if (el.classList.contains('word-lit')) el.classList.remove('word-lit', 'lit');
+        }
+      });
+    } catch (err) {
+      console.warn('[Lyrics] syncLyricsWithTime error caught safely:', err);
+    }
   }
 
   function updateActiveLyricLine(index) {
@@ -5463,7 +4423,8 @@ document.addEventListener('DOMContentLoaded', () => {
       div.setAttribute('data-index', idx);
       if (line.time !== undefined) div.setAttribute('data-time', line.time);
       div.textContent = line.text;
-      div.addEventListener('click', () => {
+      div.addEventListener('click', (e) => {
+        e.stopPropagation();
         if (Number.isFinite(line.time)) {
           seekAudioTo(line.time);
           showToast(`Jumped to ${formatTime(line.time)}`);
@@ -5483,9 +4444,7 @@ document.addEventListener('DOMContentLoaded', () => {
       syncLyricsWithTime(targetTime);
     }
   };
-  // Public deterministic clock hook is used by the E2E harness to exercise
-  // lyric highlighting/autoscroll while no real audio deck is playing.
-  window.syncLyricsWithTime = (time, force = false) => syncLyricsWithTime(time, force, true);
+  window.syncLyricsWithTime = syncLyricsWithTime;
 
   // ------------------------------------------------------------------------
   // Home Screen Instant Live Search Engine (YouTube Music InnerTube)
@@ -5643,7 +4602,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="qp-badge">Radio</span>
             <div class="qp-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
             <div class="qp-artist" title="${escapeHtml(track.artist || '')}">${escapeHtml(track.artist || 'MeloPair')}</div>
-            ${queueActionMarkup(track)}
           </div>
         `;
 
@@ -5670,7 +4628,6 @@ document.addEventListener('DOMContentLoaded', () => {
       tracks.forEach((track, idx) => {
         const item = document.createElement('div');
         item.className = 'search-item';
-        queueActionTracks.set(String(track.id), track);
         const durText = track.durationString || formatTime(getTrackDurationSeconds(track) || 195);
         item.innerHTML = `
           <span class="queue-index" style="width:24px; font-weight:700; color:var(--text-dim); text-align:center;">#${idx + 1}</span>
@@ -5680,7 +4637,13 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="search-item-artist">${escapeHtml(track.artist)}</div>
           </div>
           <span style="font-size:12px; color:var(--text-dim); margin-right:12px;">${durText}</span>
-          ${queueActionMarkup(track)}
+          <div class="queue-actions">
+            <button class="action-btn-mini add-btn" title="Add to Up Next Queue">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <path fill="currentColor" d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/>
+              </svg>
+            </button>
+          </div>
         `;
 
         item.addEventListener('click', (e) => {
@@ -5766,7 +4729,6 @@ document.addEventListener('DOMContentLoaded', () => {
     tracks.forEach((track, idx) => {
       const item = document.createElement('div');
       item.className = 'search-item';
-      queueActionTracks.set(String(track.id), track);
       item.innerHTML = `
         <span class="queue-index" style="width:20px; font-weight:700; color:var(--text-dim); text-align:center;">#${idx + 1}</span>
         <img class="search-thumb" loading="lazy" decoding="async" src="${track.thumbnail || 'default-art.png'}" alt="Cover" onerror="this.src='default-art.png'">
@@ -5774,7 +4736,13 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="search-item-title">${escapeHtml(track.title)}</div>
           <div class="search-item-artist">${escapeHtml(track.artist)}</div>
         </div>
-        ${queueActionMarkup(track)}
+        <div class="queue-actions">
+          <button class="action-btn-mini add-btn" title="Add to Up Next Queue">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <path fill="currentColor" d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/>
+            </svg>
+          </button>
+        </div>
       `;
 
       item.addEventListener('click', (e) => {
@@ -5793,7 +4761,7 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
-        playTrack(selected, true);
+        playTrack(selected, 'DISCOVERY');
         showToast(`Playing "${track.title}" • Starting Radio`);
       });
 
@@ -5807,6 +4775,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function normalizeTasteLabel(value) {
     return String(value || '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   }
+
+  const feedJunkTitlePatterns = [
+    /\btop\s*100\b/i, /\btop\s+hits\b/i, /\bplaylist\b/i, /\bmixtape\b/i,
+    /\bfull\s+album\b/i, /\bnon[\s-]?stop\b/i, /\bjukebox\b/i,
+    /\bmashup\s+mix\b/i, /\bcompilation\b/i, /\bbest\s+of\s+20\b/i,
+    /\bhits\s+20\b/i, /\b1\s*(?:hour|hr)\b/i, /\bhour\s+loop\b/i,
+    /\bslowed\s*\+\s*reverb\b/i
+  ];
 
   function getTrackDurationSeconds(track) {
     const raw = track?.durationSec ?? track?.duration ?? track?.lengthSeconds ?? track?.length ?? 0;
@@ -5822,24 +4798,18 @@ document.addEventListener('DOMContentLoaded', () => {
     return feedJunkTitlePatterns.some(pattern => pattern.test(String(query)));
   }
 
-  function isExplicitVideoSearch(query = '') {
-    return /\bvideo\b/i.test(String(query));
-  }
-
   function filterSearchSuggestionStrings(items, query = '') {
     const explicit = isExplicitJunkSearch(query);
     return [...new Set((Array.isArray(items) ? items : [])
       .map(item => String(item || '').trim())
       .filter(Boolean)
-      .filter(text => (explicit || !feedJunkTitlePatterns.some(pattern => pattern.test(text))) &&
-        (isExplicitVideoSearch(query) || !musicVideoTitlePattern.test(text))))];
+      .filter(text => explicit || !feedJunkTitlePatterns.some(pattern => pattern.test(text))))];
   }
 
   function isCleanFeedTrack(track, { homeShelf = false, explicitQuery = '' } = {}) {
     if (!track?.id || !String(track.title || '').trim()) return false;
     const title = String(track.title);
     if (!isExplicitJunkSearch(explicitQuery) && feedJunkTitlePatterns.some(pattern => pattern.test(title))) return false;
-    if (!isExplicitVideoSearch(explicitQuery) && (track.isVideo === true || musicVideoTitlePattern.test(title))) return false;
     const duration = getTrackDurationSeconds(track);
     if (homeShelf && duration && (duration > 480 || duration < 45)) return false;
     return true;
@@ -5892,172 +4862,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function getTrackVibeQuery(track) {
-    const profile = detectTrackVibe(track);
-    return `${profile.languageQuery} ${profile.moodQuery}`;
-  }
-
-  // ------------------------------------------------------------------------
-  // High-Precision Language / Region & Mood / Theme Tag Detection Engine
-  // ------------------------------------------------------------------------
-  function detectTrackVibe(track) {
-    if (!track) return {
-      region: 'english_intl',
-      mood: 'chill_lofi',
-      regionLabel: 'English',
-      moodLabel: 'Chill',
-      headerVibeLabel: 'English Chill',
-      languageQuery: 'English',
-      moodQuery: 'chill songs'
-    };
-
-    // 1. Collect metadata & lyrics sample
-    const rawTitle = String(track.title || '');
-    const rawArtist = String(track.artist || '');
-    const rawAlbum = String(track.album || track.albumName || '');
-    const rawLang = String(track.language || track.lang || '').toLowerCase().trim();
-
-    // Check cached lyrics text if available
-    let lyricsSample = '';
-    try {
-      const cached = readCachedLyrics(track);
-      if (cached?.lyrics) lyricsSample = String(cached.lyrics).slice(0, 500);
-    } catch (e) {}
-
-    const fullText = `${rawTitle} ${rawArtist} ${rawAlbum} ${lyricsSample}`.toLowerCase();
-    const cleanText = normalizeTasteLabel(`${rawTitle} ${rawArtist} ${rawAlbum}`);
-
-    // Unicode Script Ranges
-    const hasGurmukhi = /[\u0A00-\u0A7F]/.test(fullText);
-    const hasDevanagari = /[\u0A80-\u0AFF\u0900-\u097F]/.test(fullText);
-    const hasTamil = /[\u0B80-\u0BFF]/.test(fullText);
-    const hasTelugu = /[\u0C00-\u0C7F]/.test(fullText);
-    const hasKannada = /[\u0C80-\u0CFF]/.test(fullText);
-    const hasMalayalam = /[\u0D00-\u0D7F]/.test(fullText);
-    const hasKorean = /[\uAC00-\uD7AF\u1100-\u11FF]/.test(fullText);
-    const hasCJK = /[\u4E00-\u9FFF\u3040-\u30FF]/.test(fullText);
-
-    // 2. Region / Language Determination
-    let region = 'english_intl';
-    let regionLabel = 'English';
-    let languageQuery = 'English';
-
-    if (
-      hasGurmukhi ||
-      rawLang === 'punjabi' ||
-      /\b(punjabi|bhangra|desi|jatt|yaar|pind|geet|sardaar|gabru|kudi)\b/i.test(fullText) ||
-      /karan aujla|sidhu moose|sukha|diljit|shubh|amrit maan|ap dhillon|prophec|jordan sandhu|gurinder gill|parmish verma|mankirt|kulwinder|ikky|byg byrd|deep jandu|gurdas maan|amrinder gill|tarsem jassar|arjan dhillon|hustinder|cheema y|bhalwaan|wazir patar|raf-saperra|chani nattan|inderpal moga/i.test(cleanText)
-    ) {
-      region = 'punjabi';
-      regionLabel = 'Punjabi';
-      languageQuery = 'Punjabi';
-    } else if (
-      hasTamil || hasTelugu || hasMalayalam || hasKannada ||
-      /tamil|telugu|malayalam|kannada/i.test(rawLang) ||
-      /anirudh|ar rahman|a\.r\. rahman|sid sriram|harris jayaraj|yuvan shankar|dsp|devi sri prasad|thaman|ilayaraja|santhosh narayanan|sushin shyam|gv prakash|dhibu ninan/i.test(cleanText)
-    ) {
-      region = 'south_indian';
-      regionLabel = 'South Indian';
-      languageQuery = /tamil/i.test(rawLang + cleanText) ? 'Tamil' : /telugu/i.test(rawLang + cleanText) ? 'Telugu' : 'South Indian';
-    } else if (
-      hasDevanagari ||
-      rawLang === 'hindi' ||
-      /\b(hindi|bollywood|ishq|pyaar|tere|meri|dil|tum|hum|zindagi|saath|mohabbat|deewana|duniya|sanam|kasam|raataan|kesariya)\b/i.test(fullText) ||
-      /arijit singh|pritam|shreya ghoshal|armaan malik|jubin nautiyal|atif aslam|darshan raval|mohit chauhan|neha kakkar|badshah|vishal mishra|jasleen royal|sachet|parampara|amit trivedi|b praak|jaani|rahat fateh|sunidhi chauhan|kk|sonu nigam|kumar sanu|udit narayan|alka yagnik|lata mangeshkar|kishore kumar/i.test(cleanText)
-    ) {
-      region = 'hindi';
-      regionLabel = 'Hindi';
-      languageQuery = 'Hindi';
-    } else if (
-      hasKorean || rawLang === 'korean' ||
-      /bts|blackpink|stray kids|twice|newjeans|aespa|exo|txt|seventeen|le sserafim|enhypen|itzy|red velvet|iu|jungkook|jimin|v|agust d|rm|taeyeon|baekhyun/i.test(cleanText)
-    ) {
-      region = 'korean';
-      regionLabel = 'K-Pop';
-      languageQuery = 'Korean K-Pop';
-    } else if (
-      rawLang === 'spanish' || rawLang === 'latin' ||
-      /bad bunny|rosalia|j balvin|ozuna|maluma|rauw alejandro|anuel|karol g|daddy yankee|peso pluma|feid|shakira|luis fonsi|camilo/i.test(cleanText)
-    ) {
-      region = 'latin';
-      regionLabel = 'Latin';
-      languageQuery = 'Latin Spanish';
-    } else {
-      region = 'english_intl';
-      regionLabel = 'English';
-      languageQuery = 'English';
-    }
-
-    // 3. Mood / Theme Tag Determination
-    let mood = 'chill_lofi';
-    let moodLabel = 'Chill';
-    let moodQuery = 'chill songs';
-
-    // Regex checks across fullText and cleanText
-    const isWorkoutPhonk = /\b(phonk|drift|brazilian phonk|gym|workout|motivation|beast|sigma|kordhell|playaphonk|giga|demon|speed|hardstyle|rave)\b/i.test(fullText);
-    const isHiphopRap = /\b(rap|hip hop|hip-hop|trap|flow|cypher|drill|gangsta|bars|freestyle|rhymes|diss|eminem|drake|kendrick|cole|21 savage|travisscott|lil baby|central cee)\b/i.test(fullText) ||
-      (region === 'punjabi' && /\b(flow|gang|shooter|bullet|gun|kabza|pistol|weapon|rules|stand|jatt|chobbar|east side|level|warning)\b/i.test(fullText));
-    const isPartyHype = /\b(party|dance|club|banger|hype|dj|remix|upbeat|celebration|nach|bhangra|dhol|mela|shava|daaru|peg|disco|festival|edm|bass)\b/i.test(fullText);
-    const isRomantic = /\b(love|romantic|romance|ishq|pyaar|dil|mohabbat|forever|heart|crush|lover|beloved|saath|humsafar|deewana|sweetheart|cuddle|dating|wedding|peelings|channa|heeriye)\b/i.test(fullText);
-    const isSad = /\b(sad|heartbreak|broken|bewafa|judai|lonely|tears|hurt|pain|dard|yaad|breakup|crying|sorrow|depressed|grief|die|crying|goodbye|miss you|alvida|tujhe bhula diya|channa mereya)\b/i.test(fullText);
-    const isDarkNight = /\b(after hours|night|dark|midnight|drive|late night|moody|noir|starboy|blinding lights|heartless|wicked|the weeknd|chase atlantic|sweater weather|neighbourhood|smoke|shadows|city lights)\b/i.test(fullText);
-    const isChillLofi = /\b(chill|lofi|lo-fi|acoustic|unplugged|peaceful|soft|rain|sleep|calm|relax|serene|breeze|lazy|coffee|study|slowed|reverb)\b/i.test(fullText);
-
-    if (isWorkoutPhonk) {
-      mood = 'workout_phonk';
-      moodLabel = 'Phonk';
-      moodQuery = 'workout phonk motivation';
-    } else if (isSad) {
-      mood = 'sad';
-      moodLabel = 'Sad';
-      moodQuery = 'sad heartbreak songs';
-    } else if (isDarkNight) {
-      mood = 'dark_night';
-      moodLabel = 'Dark R&B';
-      moodQuery = 'dark late night R&B songs';
-    } else if (isPartyHype) {
-      mood = 'party_hype';
-      moodLabel = 'Party';
-      moodQuery = 'party hype dance bangers';
-    } else if (isRomantic) {
-      mood = 'romantic';
-      moodLabel = 'Romantic';
-      moodQuery = 'romantic love songs';
-    } else if (isHiphopRap) {
-      mood = 'hiphop_rap';
-      moodLabel = 'Hip-Hop';
-      moodQuery = 'hip hop rap flow bangers';
-    } else if (isChillLofi) {
-      mood = 'chill_lofi';
-      moodLabel = 'Chill';
-      moodQuery = 'chill lofi acoustic vibe';
-    } else {
-      // Default to sensible mood based on region & track features
-      if (region === 'punjabi') {
-        mood = 'hiphop_rap';
-        moodLabel = 'Hip-Hop';
-        moodQuery = 'Punjabi hip hop bangers';
-      } else if (region === 'hindi') {
-        mood = 'romantic';
-        moodLabel = 'Romantic';
-        moodQuery = 'Hindi romantic love songs';
-      } else {
-        mood = 'dark_night';
-        moodLabel = 'Late Night';
-        moodQuery = 'late night pop hits';
-      }
-    }
-
-    const headerVibeLabel = `${regionLabel} ${moodLabel}`;
-
-    return {
-      region,
-      mood,
-      regionLabel,
-      moodLabel,
-      headerVibeLabel,
-      languageQuery,
-      moodQuery
-    };
+    const text = normalizeTasteLabel(`${track?.title || ''} ${track?.artist || ''}`);
+    if (/karan aujla|sukha|sidhu moose|diljit|punjabi|desi/.test(text)) return 'Punjabi Desi hip hop';
+    if (/the weeknd|after hours|heartless|dark r b/.test(text)) return 'dark R&B pop';
+    if (/billie eilish|the neighbourhood/.test(text)) return 'dark alternative indie pop';
+    if (/arijit singh|bollywood|hindi/.test(text)) return 'Hindi Bollywood';
+    const genres = getTrackGenres(track).slice(0, 2);
+    const moods = getTrackMoods(track).slice(0, 1);
+    return [...genres, ...moods].join(' ') || 'similar pop songs';
   }
 
   function getTrackGenres(track) {
@@ -6097,7 +4909,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function recordTrackPlayed(track) {
     if (!track || !track.id) return;
-    rememberRecentArtist(track);
+    markTrackAsPlayed(track.id);
     sessionPlayedTrackIds.add(track.id);
     sessionPlayedSongKeys.add(trackSongKey(track));
 
@@ -6162,7 +4974,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function feedPrimaryArtist(value = '') {
-    return String(value).split(/\s+(?:feat\.?|ft\.?|with|x)\s+|\s*&\s*|\s*,\s*/i)[0]
+    return String(value).split(/,|\b(?:feat\.?|ft\.?|with)\b/i)[0]
       .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
   }
 
@@ -6319,10 +5131,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="qp-info">
           <div class="qp-title" title="${escapeHtml(label.originalTitle)}">${escapeHtml(label.cleanTitle)}</div>
           <div class="qp-artist" title="${escapeHtml(label.displayArtist)}">${escapeHtml(label.displayArtist)}</div>
-          ${queueActionMarkup(track)}
         </div>`;
       const play = () => {
-        playTrack(track, true);
+        playTrack(track, 'DISCOVERY');
         showToast(`Playing "${track.title}"`);
       };
       card.addEventListener('click', play);
@@ -6410,11 +5221,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try { legacyAffinity = JSON.parse(safeStorageGet('echo_artist_affinity') || '{}') || {}; } catch (e) {}
     const selectedArtists = new Set((tastePreferences.artists || []).map(normalizeTasteLabel));
     const selectedGenres = new Set((tastePreferences.genres || []).map(normalizeTasteLabel));
-    const selectedLanguages = new Set((tastePreferences.languages || []).map(normalizeTasteLabel));
-    const selectedMoods = new Set((tastePreferences.moods || []).map(value => {
-      const mood = normalizeTasteLabel(value);
-      return ({ 'late night dark r b': 'dark night', 'heartbreak sad': 'melancholy', 'romantic soulful': 'romantic', 'high energy party': 'party hype', 'chill lo fi': 'chill lofi', 'hip hop rap': 'hiphop rap', 'gym phonk': 'workout phonk', 'acoustic unplugged': 'chill lofi', 'sufi devotional': 'romantic', 'retro classics': 'chill lofi' })[mood] || mood;
-    }));
+    const selectedMoods = new Set((tastePreferences.moods || []).map(normalizeTasteLabel));
     const recentIds = new Set(history.slice(0, 3).map(track => track.id));
     const cleanCandidates = filterCleanFeedTracks(Array.from(tracksById.values()), { homeShelf: true })
       .filter(track => !recentIds.has(track.id));
@@ -6422,20 +5229,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const artistKey = normalizeTasteLabel(track.artist);
       const genres = getTrackGenres(track).map(normalizeTasteLabel);
       const moods = getTrackMoods(track).map(normalizeTasteLabel);
-      const trackVibe = detectTrackVibe(track);
-      const artistCredits = normalizeTasteLabel(track.artist).split(/\s+(?:feat|ft|with|x)\s+|\s*&\s*|\s*,\s*/).filter(Boolean);
       const artistPlays = Number(behavior.artists?.[artistKey]) || Number(legacyAffinity[track.artist]) || 0;
       const genreMatch = genres.some(genre => selectedGenres.has(genre));
-      const moodMatch = moods.some(mood => selectedMoods.has(mood)) || selectedMoods.has(normalizeTasteLabel(trackVibe.mood));
-      const languageKey = normalizeTasteLabel(trackVibe.regionLabel || trackVibe.languageQuery);
-      const languageMatch = selectedLanguages.has(languageKey) || (languageKey === 'english' && selectedLanguages.has('english international')) || (languageKey === 'k pop' && selectedLanguages.has('korean k pop')) || (languageKey === 'latin' && selectedLanguages.has('latin spanish')) || (languageKey === 'south indian' && (selectedLanguages.has('tamil') || selectedLanguages.has('telugu')));
+      const moodMatch = moods.some(mood => selectedMoods.has(mood));
       const learnedGenreScore = Math.max(0, ...genres.map(genre => Number(behavior.genres?.[genre]) || 0));
       const learnedMoodScore = Math.max(0, ...moods.map(mood => Number(behavior.moods?.[mood]) || 0));
       let score = 0;
-      if (selectedArtists.has(artistKey) || artistCredits.some(artist => selectedArtists.has(artist))) score += 8;
+      if (selectedArtists.has(artistKey)) score += 8;
       if (genreMatch) score += 4;
       if (moodMatch) score += 2;
-      if (languageMatch) score += 2.5;
       score += Math.min(5, Math.log1p(artistPlays) * 1.8);
       score += Math.min(4, Math.log1p(learnedGenreScore) * 1.4);
       score += Math.min(2, Math.log1p(learnedMoodScore));
@@ -6484,18 +5286,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const preferredGenre = (tastePreferences.genres || [])[0] || Object.entries(behavior.genres || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
     const preferredMood = (tastePreferences.moods || [])[0] || Object.entries(behavior.moods || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
     const moodQuery = {
-      chill: 'chill relaxing', focus: 'focus study', energetic: 'high energy', romantic: 'romantic love',
-      melancholy: 'sad emotional', party: 'party dance',
-      'late night dark r b': 'dark late night R&B', 'heartbreak sad': 'heartbreak sad songs',
-      'romantic soulful': 'romantic soulful songs', 'high energy party': 'high energy party songs',
-      'chill lo fi': 'chill lo-fi songs', 'hip hop rap': 'hip hop rap songs',
-      'gym phonk': 'gym phonk songs', 'acoustic unplugged': 'acoustic unplugged songs',
-      'sufi devotional': 'sufi devotional music', 'retro classics': 'retro classic hits'
+      chill: 'chill relaxing',
+      focus: 'focus study',
+      energetic: 'high energy',
+      romantic: 'romantic love',
+      melancholy: 'sad emotional',
+      party: 'party dance'
     }[normalizeTasteLabel(preferredMood)] || '';
     const likedTracks = getRecentLikedTracks(3);
-    const preferredLanguage = (tastePreferences.languages || [])[0] || '';
-    const preferenceQuery = (preferredArtist || moodQuery || preferredGenre || preferredLanguage)
-      ? [preferredArtist, moodQuery, preferredGenre, preferredLanguage, 'songs'].filter(Boolean).join(' ')
+    const preferenceQuery = (preferredArtist || moodQuery || preferredGenre)
+      ? [preferredArtist, moodQuery, preferredGenre, 'songs'].filter(Boolean).join(' ')
       : '';
     const queryPlan = [
       ...topArtists.map(item => `${item.name} songs`),
@@ -6631,7 +5431,7 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         `;
         card.addEventListener('click', () => {
-          playTrack(track, true);
+          playTrack(track, 'DISCOVERY');
           showToast(`Playing "${track.title}"`);
         });
         browseTracksGrid.appendChild(card);
@@ -7505,8 +6305,6 @@ document.addEventListener('DOMContentLoaded', () => {
           lastPlayedTrack,
           lastPlayedPosition,
           tastePreferences,
-          importedListeningMemory,
-          onboardingDone: safeStorageGet('melopair_onboarding_done') === 'true' || safeStorageGet('melopair_taste_setup_v1') === 'true',
           settings: {
             crossfadeSeconds: crossfadeSeconds,
             disableCrossfadeForAlbums: disableCrossfadeForAlbums,
@@ -7539,7 +6337,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadPersistentState() {
     try {
-      await profileInitializationPromise;
       let data = null;
       if (window.echoApi && window.echoApi.loadUserData) {
         data = await window.echoApi.loadUserData();
@@ -7564,9 +6361,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (mergedHistory.length >= 50) break;
         }
       }
-      history = mergedHistory.filter(track => isCleanFeedTrack(track));
-      recentArtistHistory.length = 0;
-      history.slice(0, 6).reverse().forEach(rememberRecentArtist);
+      history = mergedHistory;
       try {
         const localLastPlayed = JSON.parse(safeStorageGet('echo_last_played_track') || 'null');
         lastPlayedTrack = data?.lastPlayedTrack?.id ? data.lastPlayedTrack : (localLastPlayed?.id ? localLastPlayed : (history[0] || null));
@@ -7576,16 +6371,7 @@ document.addEventListener('DOMContentLoaded', () => {
           tastePreferences = data.tastePreferences;
           localStorage.setItem('melopair_taste_preferences', JSON.stringify(tastePreferences));
         }
-        const localImported = (() => { try { return JSON.parse(safeStorageGet('melopair_imported_listening_memory') || '[]'); } catch { return []; } })();
-        importedListeningMemory = Array.isArray(localImported) && localImported.length ? localImported : (Array.isArray(data?.importedListeningMemory) ? data.importedListeningMemory : []);
-        if (importedListeningMemory.length) localStorage.setItem('melopair_imported_listening_memory', JSON.stringify(importedListeningMemory));
-        if (data?.onboardingDone === true) {
-          localStorage.setItem('melopair_onboarding_done', 'true');
-          localStorage.setItem('melopair_taste_setup_v1', 'true');
-        } else if (data?.onboardingDone === false) {
-          localStorage.removeItem('melopair_onboarding_done');
-          localStorage.removeItem('melopair_taste_setup_v1');
-        }
+        if (tastePreferences.genres?.length) localStorage.setItem('melopair_taste_setup_v1', 'true');
       } catch (error) {
         lastPlayedTrack = history[0] || null;
         lastPlayedPosition = 0;
@@ -7702,25 +6488,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderHistoryList() {
     if (!historyList) return;
-    const visibleHistory = filterCleanFeedTracks(history);
-    if (visibleHistory.length === 0) {
+    if (history.length === 0) {
       historyList.innerHTML = '<div class="empty-state">No recently played tracks yet.</div>';
       return;
     }
     historyList.innerHTML = '';
-    visibleHistory.forEach(t => {
+    history.forEach(t => {
       const item = document.createElement('div');
       item.className = 'search-item';
-      queueActionTracks.set(String(t.id), t);
       item.innerHTML = `
         <img class="search-thumb" loading="lazy" decoding="async" src="${t.artwork || t.thumbnail || 'default-art.png'}" alt="Cover">
         <div class="search-item-info">
           <div class="search-item-title">${escapeHtml(t.title)}</div>
           <div class="search-item-artist">${escapeHtml(t.artist)}</div>
         </div>
-        ${queueActionMarkup(t)}
       `;
-      item.addEventListener('click', () => playTrack(t, true));
+      item.addEventListener('click', () => playTrack(t, 'DISCOVERY'));
       historyList.appendChild(item);
     });
   }
@@ -7734,7 +6517,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (Array.isArray(downloadedTracks)) {
       downloadedTracks.forEach(t => {
-          if (t && t.id && !seenIds.has(t.id) && isCleanFeedTrack(t)) {
+        if (t && t.id && !seenIds.has(t.id)) {
           seenIds.add(t.id);
           tracksToDisplay.push({ ...t, isOffline: true });
         }
@@ -7748,7 +6531,7 @@ document.addEventListener('DOMContentLoaded', () => {
             history.find(t => t.id === id) ||
             queue.find(t => t.id === id) ||
             (currentTrack && currentTrack.id === id ? currentTrack : null);
-          if (track && isCleanFeedTrack(track)) {
+          if (track) {
             seenIds.add(id);
             tracksToDisplay.push(track);
           } else {
@@ -7768,7 +6551,6 @@ document.addEventListener('DOMContentLoaded', () => {
     tracksToDisplay.forEach(track => {
       const item = document.createElement('div');
       item.className = 'search-item track-item library-item';
-      queueActionTracks.set(String(track.id), track);
       const cover = track.artwork || track.thumbnail || 'default-art.png';
       const badge = track.isOffline
         ? '<span class="qp-badge" style="margin-left: 8px; background: rgba(52, 199, 89, 0.2); color: #34C759;">Downloaded</span>'
@@ -7780,10 +6562,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="search-item-title">${escapeHtml(track.title)}${badge}</div>
           <div class="search-item-artist">${escapeHtml(track.artist || 'MeloPair')}</div>
         </div>
-        ${queueActionMarkup(track)}
       `;
-      item.addEventListener('click', event => {
-        playTrack(track, true);
+      item.addEventListener('click', () => {
+        playTrack(track, 'DISCOVERY');
         showToast(`Playing "${track.title}" from Library 🎵`);
       });
       libraryListEl.appendChild(item);
@@ -7812,9 +6593,6 @@ document.addEventListener('DOMContentLoaded', () => {
       hostNudgeVal.textContent = `${hostMasterOffsetMs > 0 ? '+' : ''}${displayVal}ms`;
     }
     broadcastEchoRoomState(true);
-    if (!playing && !isCrossfading) {
-      setPlaybackStatus('idle', '');
-    }
     if (window.updateNowPlayingModalUI) window.updateNowPlayingModalUI(currentTrack);
     if (window.notifyNativeMediaState) window.notifyNativeMediaState(currentTrack, isPlaying);
   }
@@ -7828,8 +6606,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function openPartyRoomsModal() {
     if (partyModalBackdrop) partyModalBackdrop.classList.remove('hidden');
-    // Publish the current host state before guests scan or open the generated link.
-    broadcastEchoRoomState(true);
     await refreshRoomInfo();
     populatePcAudioOutputDevices();
   }
@@ -8086,7 +6862,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // 6-Digit Room Passcode Controls
   if (applyCustomCodeBtn && customRoomCodeInput) {
     const handleSetCustomCode = async () => {
-      const code = customRoomCodeInput.value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+      let raw = customRoomCodeInput.value.trim();
+      if (raw.toLowerCase().includes('melopair://room/')) {
+        raw = raw.slice(raw.toLowerCase().indexOf('melopair://room/') + 'melopair://room/'.length);
+      }
+      const code = raw.toUpperCase().replace(/[^A-Z0-9-]/g, '');
       if (!code || code.length < 3) {
         showToast('Please enter at least 3 alphanumeric characters');
         return;
@@ -8524,34 +7304,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  const roomRealignBtn = document.getElementById('roomRealignBtn');
-  let roomRealignPending = false;
-  let roomRealignFeedbackTimer = 0;
-  const flashRoomRealignButton = () => {
-    if (!roomRealignBtn) return;
-    roomRealignBtn.textContent = '✓ Synced';
-    clearTimeout(roomRealignFeedbackTimer);
-    roomRealignFeedbackTimer = setTimeout(() => {
-      roomRealignBtn.textContent = '↺ Realign';
-      roomRealignFeedbackTimer = 0;
-    }, 1200);
-  };
-  if (roomRealignBtn) {
-    roomRealignBtn.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      if (desktopSocket && desktopSocket.readyState === WebSocket.OPEN) {
-        roomRealignPending = true;
-        desktopSocket.send(JSON.stringify({ type: 'room-request-sync', clientSentAtMs: Date.now() }));
-        return;
-      }
-      if (window.echoApi?.realignRoomDevices) {
-        broadcastEchoRoomState(true);
-        await window.echoApi.realignRoomDevices();
-        flashRoomRealignButton();
-      }
-    });
-  }
-
   if (partySyncPulseBtn) {
     partySyncPulseBtn.addEventListener('click', async () => {
       if (window.echoApi && window.echoApi.sendRoomSyncPulse) {
@@ -8855,7 +7607,7 @@ document.addEventListener('DOMContentLoaded', () => {
   currentTrack = null;
 
   loadPersistentState().then(() => {
-    if (safeStorageGet('melopair_onboarding_done') === 'true' || safeStorageGet('melopair_taste_setup_v1') === 'true') tasteOnboarding?.classList.add('hidden');
+    if (safeStorageGet('melopair_taste_setup_v1') === 'true') tasteOnboarding?.classList.add('hidden');
     currentTrack = lastPlayedTrack ? { ...lastPlayedTrack } : null;
     resumeOnOpenTrackId = currentTrack && lastPlayedPosition > 0 ? currentTrack.id : null;
     queue = currentTrack
@@ -9151,11 +7903,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     nowPlayingModal.classList.remove('hidden');
     isNowPlayingOpen = true;
-    if (isStarsBgMode) {
-      npStarfieldCanvas?.classList.remove('hidden');
-      initStarfield();
-      startStarfieldIfVisible();
-    }
 
     // Track active sidebar navigation item to restore upon dismissal
     const activeNav = document.querySelector('.sidebar-nav .nav-item.active');
@@ -9165,15 +7912,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateNowPlayingBgModeUI();
     updateNowPlayingView(currentTrack);
+    // lyrics view defaults to sheet-hidden with artwork visible
 
-    // Primary presentation: focused 3-line kinetic typography
-    setNowPlayingLyricsView('kinetic');
-
-    const curTime = isYtActive && ytPlayer && typeof ytPlayer.getCurrentTime === 'function'
-      ? (ytPlayer.getCurrentTime() || 0)
-      : (activeAudio?.currentTime || 0);
-    if (Number.isFinite(curTime)) {
-      syncLyricsWithTime(curTime);
+    if (activeLyricIndex >= 0) {
+      renderImmersiveLyrics(activeLyricIndex);
     }
     scheduleNowPlayingSync();
   }
@@ -9183,7 +7925,6 @@ document.addEventListener('DOMContentLoaded', () => {
     nowPlayingModal.classList.remove('np-lyrics-fullscreen-mode');
     nowPlayingModal.classList.add('hidden');
     isNowPlayingOpen = false;
-    stopStarfield();
     if (npSyncRaf) {
       cancelAnimationFrame(npSyncRaf);
       npSyncRaf = 0;
@@ -9286,18 +8027,15 @@ document.addEventListener('DOMContentLoaded', () => {
           setLyricsSheetState('half');
         } else if (currentLyricsSheetState === 'half') {
           setLyricsSheetState('full');
-          setLyricsFullscreen(true);
         }
       } else if (accumulated < -35) {
         // Downward scroll gesture: reverse full -> half -> hidden
         if (currentLyricsSheetState === 'full') {
           if (!stream || stream.scrollTop <= 15) {
             setLyricsSheetState('half');
-            setLyricsFullscreen(false);
           }
         } else if (currentLyricsSheetState === 'half') {
           setLyricsSheetState('hidden');
-          setLyricsFullscreen(false);
         }
       }
     }, 35);
@@ -9361,73 +8099,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }, 2500);
     }, { passive: true });
   }
-  function setLyricsFullscreen(enabled) {
-    if (!nowPlayingModal) return;
-    nowPlayingModal.classList.toggle('np-lyrics-fullscreen-mode', !!enabled);
-    const curTime = isYtActive && ytPlayer && typeof ytPlayer.getCurrentTime === 'function'
-      ? (ytPlayer.getCurrentTime() || 0)
-      : (activeAudio?.currentTime || 0);
-    if (Number.isFinite(curTime)) syncLyricsWithTime(curTime);
-  }
-  window.setLyricsFullscreen = setLyricsFullscreen;
-
-  if (npLyricsFullscreenBackBtn) {
-    npLyricsFullscreenBackBtn.addEventListener('click', () => {
-      setLyricsFullscreen(false);
-    });
-  }
-
-  const npKineticVpDbl = document.getElementById('npKineticViewport');
-  if (npKineticVpDbl) {
-    npKineticVpDbl.addEventListener('dblclick', () => {
-      const isFs = nowPlayingModal?.classList.contains('np-lyrics-fullscreen-mode');
-      setLyricsFullscreen(!isFs);
-    });
-  }
-
-  let lyricsWheelAccumulator = 0;
-  let lyricsWheelTimer = null;
-  function handleLyricsWheelScroll(e) {
-    if (!nowPlayingModal || nowPlayingModal.classList.contains('hidden')) return;
-    if (e.target.closest('#npSearchResults') || e.target.closest('#npDrawerList') || e.target.closest('.np-queue-drawer')) return;
-
-    lyricsWheelAccumulator += e.deltaY;
-    clearTimeout(lyricsWheelTimer);
-    lyricsWheelTimer = setTimeout(() => {
-      const delta = lyricsWheelAccumulator;
-      lyricsWheelAccumulator = 0;
-      const isFs = nowPlayingModal.classList.contains('np-lyrics-fullscreen-mode');
-      if (!isFs && delta > 15) {
-        setLyricsFullscreen(true);
-      } else if (isFs && delta < -15) {
-        setLyricsFullscreen(false);
-      }
-    }, 35);
-  }
-
-  npKineticViewport?.addEventListener('wheel', handleLyricsWheelScroll, { passive: true });
-  npDisplayContainer?.addEventListener('wheel', handleLyricsWheelScroll, { passive: true });
-  const npKineticLinesEl = document.getElementById('npKineticLines');
-  npKineticLinesEl?.addEventListener('wheel', handleLyricsWheelScroll, { passive: true });
-  nowPlayingModal?.addEventListener('wheel', handleLyricsWheelScroll, { passive: true });
-
-  let lyricsTouchStartY = null;
-  npKineticViewport?.addEventListener('touchstart', (e) => {
-    lyricsTouchStartY = e.touches[0]?.clientY || null;
-  }, { passive: true });
-  nowPlayingModal?.addEventListener('touchstart', (e) => {
-    if (!e.target.closest('#npSearchResults') && !e.target.closest('#npDrawerList')) {
-      lyricsTouchStartY = e.touches[0]?.clientY || null;
-    }
-  }, { passive: true });
-
   npKineticViewport?.addEventListener('touchend', (event) => {
     if (lyricsTouchStartY === null) return;
-    const distance = (event.changedTouches[0]?.clientY || 0) - lyricsTouchStartY;
+    const distance = event.changedTouches[0]?.clientY - lyricsTouchStartY;
     lyricsTouchStartY = null;
-    const isFs = nowPlayingModal?.classList.contains('np-lyrics-fullscreen-mode');
-    if (!isFs && distance < -32) setLyricsFullscreen(true);
-    else if (isFs && distance > 32) setLyricsFullscreen(false);
+    if (Number.isFinite(distance) && Math.abs(distance) > 36) setLyricsFullscreen(true);
   }, { passive: true });
 
   if (playerLeft) playerLeft.addEventListener('click', openNowPlaying);
@@ -9468,12 +8144,9 @@ document.addEventListener('DOMContentLoaded', () => {
     window.isNowPlayingLyricsMode = mode;
     if (mode === 'kinetic') {
       npKineticViewport?.classList.remove('hidden');
-      npArtworkView?.classList.add('hidden');
+      npArtworkView?.classList.remove('hidden');
       npLyricsToggleBtn?.classList.add('active');
-      const curTime = isYtActive && ytPlayer && typeof ytPlayer.getCurrentTime === 'function'
-        ? (ytPlayer.getCurrentTime() || 0)
-        : (activeAudio?.currentTime || 0);
-      if (Number.isFinite(curTime)) syncLyricsWithTime(curTime);
+      if (activeLyricIndex >= 0) renderImmersiveLyrics(activeLyricIndex);
     } else if (mode === 'artwork') {
       npArtworkView?.classList.remove('hidden');
       npKineticViewport?.classList.add('hidden');
@@ -9568,13 +8241,11 @@ document.addEventListener('DOMContentLoaded', () => {
               const row = document.createElement('div');
               row.className = 'np-search-item';
               const thumb = item.artwork || item.thumbnail || 'default-art.png';
-              queueActionTracks.set(String(item.id), item);
               row.innerHTML = `
                 <img class="np-search-thumb" src="${thumb}" alt="Cover" onerror="this.src='default-art.png'">
                 <div class="np-search-item-meta">
                   <span class="np-search-item-title">${escapeHtml(item.title)}</span>
                   <span class="np-search-item-artist">${escapeHtml(item.artist || 'Unknown')}</span>
-                  ${queueActionMarkup(item)}
                 </div>
               `;
               row.addEventListener('click', () => {
@@ -9582,7 +8253,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 npSearchInput.value = '';
                 if (npClearSearchBtn) npClearSearchBtn.classList.add('hidden');
                 if (typeof playTrack === 'function') {
-                  playTrack(item);
+                  playTrack(item, 'DISCOVERY');
                 }
               });
               npSearchResults.appendChild(row);
@@ -9632,103 +8303,48 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    let upNextTracks = [...manualQueue, ...contextQueue].filter(t => !currentTrack || t.id !== currentTrack.id);
-    let radioTracks = isAutoplayEnabled ? autoplayQueue.filter(t => !currentTrack || t.id !== currentTrack.id) : [];
-
-    // Fallback: If 3-tier sub-queues are empty but master queue has items
-    if (upNextTracks.length === 0 && radioTracks.length === 0 && Array.isArray(queue) && queue.length > 0) {
-      const remaining = queue.filter(t => !currentTrack || t.id !== currentTrack.id);
-      upNextTracks = remaining.filter(t => !t.isAutoplaySuggestion && !autoQueueTrackIds.has(t.id));
-      radioTracks = remaining.filter(t => t.isAutoplaySuggestion || autoQueueTrackIds.has(t.id));
-      if (upNextTracks.length === 0 && radioTracks.length === 0) {
-        upNextTracks = remaining;
-      }
-    }
-
-    const totalUpcoming = upNextTracks.length + radioTracks.length;
+    const upcomingTracks = Array.isArray(queue) ? queue.filter(t => !currentTrack || t.id !== currentTrack.id) : [];
 
     if (npDrawerCount) {
-      npDrawerCount.textContent = `${totalUpcoming} tracks upcoming`;
+      npDrawerCount.textContent = `${upcomingTracks.length} tracks upcoming`;
     }
 
     if (!npDrawerList) return;
     npDrawerList.innerHTML = '';
 
-    if (totalUpcoming === 0) {
-      npDrawerList.innerHTML = '<div style="color:rgba(255,255,255,0.4); font-size:13px; text-align:center; padding:30px 10px;">No upcoming tracks in queue</div>';
+    if (upcomingTracks.length === 0) {
+      if (isBuildingRadioMix) {
+        npDrawerList.innerHTML = `<div class="queue-loading-shimmer" style="color:rgba(255,255,255,0.6); font-size:13px; text-align:center; padding:30px 10px;">Building mix for "${escapeHtml(currentTrack?.title || 'track')}"...</div>`;
+      } else {
+        npDrawerList.innerHTML = '<div style="color:rgba(255,255,255,0.4); font-size:13px; text-align:center; padding:30px 10px;">No upcoming tracks in queue</div>';
+      }
       return;
     }
 
-    function createNpRowElement(track, queueKind, queueIndex) {
+    upcomingTracks.forEach((track, index) => {
+      if (autoQueueTrackIds.has(track.id) && !autoQueueTrackIds.has(upcomingTracks[index - 1]?.id)) {
+        const label = document.createElement('div');
+        label.className = 'np-autoplay-section-label';
+        label.textContent = `Autoplay • Similar to ${currentTrack?.title || 'this track'}`;
+        npDrawerList.appendChild(label);
+      }
       const item = document.createElement('div');
       item.className = 'np-drawer-item';
-      item.draggable = true;
-      item.dataset.queueKind = queueKind;
-      item.dataset.queueIndex = String(queueIndex);
       item.innerHTML = `
-        <button class="action-btn-mini queue-drag-handle" type="button" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</button>
         <img class="np-drawer-item-art" loading="lazy" decoding="async" src="${track.artwork || track.thumbnail || 'default-art.png'}" alt="Cover" onerror="this.src='default-art.png'">
         <div class="np-drawer-item-meta">
           <span class="np-drawer-item-title">${escapeHtml(track.title)}</span>
           <span class="np-drawer-item-artist">${escapeHtml(track.artist || 'Unknown Artist')}</span>
         </div>
         <span class="np-drawer-item-duration">${formatTime(track.duration || 180)}</span>
-        <div class="queue-actions">
-          <button class="action-btn-mini queue-move-up-btn" type="button" title="Move up" aria-label="Move up">↑</button>
-          <button class="action-btn-mini queue-move-down-btn" type="button" title="Move down" aria-label="Move down">↓</button>
-          <button class="action-btn-mini queue-remove-btn" type="button" title="Remove from queue" aria-label="Remove from queue">×</button>
-        </div>
       `;
-      item.addEventListener('click', event => {
-        if (event.target.closest('.queue-move-up-btn')) { event.stopPropagation(); moveQueueItem(queueKind, queueIndex, -1); return; }
-        if (event.target.closest('.queue-move-down-btn')) { event.stopPropagation(); moveQueueItem(queueKind, queueIndex, 1); return; }
-        if (event.target.closest('.queue-remove-btn')) { event.stopPropagation(); removeQueueItem(queueKind, queueIndex); return; }
-        if (event.target.closest('.queue-drag-handle')) return;
+      item.addEventListener('click', () => {
         if (typeof playTrack === 'function') {
-          playTrack(track);
+          playTrack(track, 'QUEUE');
         }
       });
-      item.addEventListener('dragstart', dragEvent => {
-        dragEvent.dataTransfer?.setData('text/plain', JSON.stringify({ kind: queueKind, index: queueIndex }));
-        if (dragEvent.dataTransfer) dragEvent.dataTransfer.effectAllowed = 'move';
-      });
-      item.addEventListener('dragover', dragEvent => dragEvent.preventDefault());
-      item.addEventListener('drop', dragEvent => {
-        dragEvent.preventDefault();
-        try {
-          const from = JSON.parse(dragEvent.dataTransfer?.getData('text/plain') || 'null');
-          if (from) reorderQueueItem(from.kind, from.index, queueKind, queueIndex);
-        } catch (error) {
-          console.warn('[Queue] Could not reorder Now Playing queue item:', error);
-        }
-      });
-      return item;
-    }
-
-    if (upNextTracks.length > 0) {
-      const upNextHeader = document.createElement('div');
-      upNextHeader.className = 'queue-section-header';
-      upNextHeader.innerHTML = `<span>Up Next</span><span class="queue-section-badge">${upNextTracks.length}</span>`;
-      npDrawerList.appendChild(upNextHeader);
-
-      upNextTracks.forEach(track => {
-        const sourceQueue = manualQueue.some(item => item.id === track.id) ? manualQueue : contextQueue;
-        const kind = sourceQueue === manualQueue ? 'manual' : 'context';
-        npDrawerList.appendChild(createNpRowElement(track, kind, sourceQueue.findIndex(item => item.id === track.id)));
-      });
-    }
-
-    if (radioTracks.length > 0) {
-      const radioHeader = document.createElement('div');
-      radioHeader.className = 'queue-section-header autoplay-section-header';
-      const labelText = activeRadioVibeLabel ? `Autoplay • ${escapeHtml(activeRadioVibeLabel)}` : `Autoplay • Similar to ${escapeHtml(currentTrack?.title || 'Current')}`;
-      radioHeader.innerHTML = `<span>${labelText}</span><span class="queue-section-badge">Radio</span>`;
-      npDrawerList.appendChild(radioHeader);
-
-      radioTracks.forEach(track => {
-        npDrawerList.appendChild(createNpRowElement(track, 'autoplay', autoplayQueue.findIndex(item => item.id === track.id)));
-      });
-    }
+      npDrawerList.appendChild(item);
+    });
   }
   window.renderNowPlayingDrawerQueue = renderNowPlayingDrawerQueue;
 
@@ -9751,13 +8367,13 @@ document.addEventListener('DOMContentLoaded', () => {
     window.isAutoplayEnabled = isAutoplayEnabled;
     if (!isAutoplayEnabled) {
       radioRecommendationRequestId++;
-      autoplayQueue = [];
-      syncMasterQueue();
+      queue = queue.filter(item => !autoQueueTrackIds.has(item.id));
+      autoQueueTrackIds.clear();
       renderQueueList();
       window.renderNowPlayingDrawerQueue?.();
       return;
     }
-    if (currentTrack) void generateRadioSuggestions(currentTrack, currentRadioFilterMode);
+    if (currentTrack) void fetchRadioRecommendations(currentTrack, false);
   }
 
   if (queueAutoplayToggle) {
@@ -9877,9 +8493,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (npScrubberFill) npScrubberFill.style.width = `${pct * 100}%`;
       if (npScrubberThumb) npScrubberThumb.style.left = `${pct * 100}%`;
       if (npCurrentTime) npCurrentTime.textContent = formatTime(targetTime);
-
-      activeLyricIndex = -1;
-      syncLyricsWithTime(targetTime, true);
     }
 
     npScrubberTrack.addEventListener('click', seekFromEvent);
@@ -9968,18 +8581,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function syncNowPlayingLoop() {
     npSyncRaf = 0;
-    if (!isNowPlayingOpen || document.hidden) return;
-    let curTime = 0;
-    let mediaDuration = 0;
+    if (!isNowPlayingOpen || document.hidden || !activeAudio) return;
+    let curTime = activeAudio.currentTime;
+    let mediaDuration = activeAudio.duration;
     if (isYtActive && ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
       try {
         curTime = ytPlayer.getCurrentTime() || 0;
         const ytDuration = ytPlayer.getDuration();
         if (Number.isFinite(ytDuration) && ytDuration > 0) mediaDuration = ytDuration;
       } catch (e) {}
-    } else if (activeAudio) {
-      curTime = activeAudio.currentTime || 0;
-      mediaDuration = activeAudio.duration || 0;
     }
     const dur = (isFinite(mediaDuration) && mediaDuration > 0)
       ? mediaDuration
@@ -9995,12 +8605,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (npDuration) npDuration.textContent = formatTime(dur);
     }
 
-    // High-precision live synchronization of 3-line kinetic typography
-    if (Number.isFinite(curTime)) {
-      syncLyricsWithTime(curTime);
-    }
-
-    if (isPlaying && isNowPlayingOpen && !document.hidden) {
+    if (isYtActive && isPlaying && isNowPlayingOpen && !document.hidden) {
       npSyncRaf = requestAnimationFrame(syncNowPlayingLoop);
     }
   }
@@ -10038,30 +8643,11 @@ document.addEventListener('DOMContentLoaded', () => {
     { id: 'starfield', label: 'Stars', icon: '✨', className: 'np-backdrop-starfield' },
     { id: 'oled', label: 'Dark', icon: '🌙', className: 'np-backdrop-oled' }
   ];
-  let isStarsBgMode = true;
-  let currentVersiBackdropIdx = 1;
+  let currentVersiBackdropIdx = 0;
 
   // Starfield Particle Canvas Animation
   let starfieldAnimId = null;
   let starfieldStars = [];
-  let starfieldLastFrame = 0;
-  let starfieldResizeHandlerAttached = false;
-
-  function isNowPlayingStageVisible() {
-    return Boolean(nowPlayingModal && !nowPlayingModal.classList.contains('hidden'));
-  }
-
-  function stopStarfield() {
-    if (starfieldAnimId !== null) cancelAnimationFrame(starfieldAnimId);
-    starfieldAnimId = null;
-    starfieldLastFrame = 0;
-  }
-
-  function startStarfieldIfVisible() {
-    if (!isStarsBgMode || !isNowPlayingStageVisible() || document.hidden || !npStarfieldCanvas) return;
-    npStarfieldCanvas.classList.remove('hidden');
-    if (starfieldAnimId === null) starfieldAnimId = requestAnimationFrame(renderStarfieldFrame);
-  }
 
   function initStarfield() {
     if (!npStarfieldCanvas) return;
@@ -10072,85 +8658,57 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!npStarfieldCanvas) return;
       const rect = npStarfieldCanvas.parentElement?.getBoundingClientRect() || { width: window.innerWidth, height: window.innerHeight };
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const oldWidth = npStarfieldCanvas.width / dpr || rect.width;
-      const oldHeight = npStarfieldCanvas.height / dpr || rect.height;
-      npStarfieldCanvas.width = Math.max(1, rect.width * dpr);
-      npStarfieldCanvas.height = Math.max(1, rect.height * dpr);
+      npStarfieldCanvas.width = rect.width * dpr;
+      npStarfieldCanvas.height = rect.height * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (starfieldStars.length) {
-        const sx = rect.width / Math.max(1, oldWidth);
-        const sy = rect.height / Math.max(1, oldHeight);
-        starfieldStars.forEach(star => { star.x *= sx; star.y *= sy; });
-      }
     }
     resizeCanvas();
-    if (!starfieldResizeHandlerAttached) {
-      window.addEventListener('resize', () => {
-        resizeCanvas();
-        startStarfieldIfVisible();
-      });
-      starfieldResizeHandlerAttached = true;
-      window.addEventListener('focus', startStarfieldIfVisible);
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden) stopStarfield();
-        else startStarfieldIfVisible();
-      });
-    }
+    window.addEventListener('resize', resizeCanvas);
 
     const count = 90;
-    if (!starfieldStars.length) for (let i = 0; i < count; i++) {
-      const speed = 0.025 + Math.random() * 0.11;
-      const angle = Math.random() * Math.PI * 2;
+    starfieldStars = [];
+    for (let i = 0; i < count; i++) {
       starfieldStars.push({
-        x: Math.random() * (npStarfieldCanvas.clientWidth || window.innerWidth),
-        y: Math.random() * (npStarfieldCanvas.clientHeight || window.innerHeight),
+        x: Math.random() * (npStarfieldCanvas.width || window.innerWidth),
+        y: Math.random() * (npStarfieldCanvas.height || window.innerHeight),
         radius: Math.random() * 1.5 + 0.5,
-        baseAlpha: Math.random() * 0.42 + 0.3,
-        twinklePhase: Math.random() * Math.PI * 2,
-        twinkleSpeed: 0.45 + Math.random() * 0.7,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed
+        alpha: Math.random() * 0.7 + 0.2,
+        pulseSpeed: (Math.random() * 0.02 + 0.005) * (Math.random() < 0.5 ? 1 : -1),
+        vx: (Math.random() - 0.5) * 0.15,
+        vy: -Math.random() * 0.25 - 0.05
       });
     }
-    startStarfieldIfVisible();
-  }
 
-  function renderStarfieldFrame(timestamp) {
-      starfieldAnimId = null;
-      if (!isStarsBgMode || !isNowPlayingStageVisible() || document.hidden || !npStarfieldCanvas) {
+    function renderStarfield() {
+      if (VERSI_BACKDROPS[currentVersiBackdropIdx].id !== 'starfield' || (nowPlayingModal && nowPlayingModal.classList.contains('hidden'))) {
+        starfieldAnimId = null;
         return;
       }
-      const dt = starfieldLastFrame ? Math.min(0.05, Math.max(0, (timestamp - starfieldLastFrame) / 1000)) : 1 / 60;
-      starfieldLastFrame = timestamp;
-      const elapsed = timestamp / 1000;
-      const ctx = npStarfieldCanvas.getContext('2d');
-      if (!ctx) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w = npStarfieldCanvas.width / dpr;
       const h = npStarfieldCanvas.height / dpr;
       ctx.clearRect(0, 0, w, h);
 
       for (let s of starfieldStars) {
-        s.x = (s.x + s.vx * dt * 60 + w) % w;
-        s.y = (s.y + s.vy * dt * 60 + h) % h;
-        const alpha = s.baseAlpha + Math.sin(elapsed * s.twinkleSpeed + s.twinklePhase) * 0.17;
-        ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0.12, Math.min(0.82, alpha))})`;
+        s.y += s.vy;
+        s.x += s.vx;
+        s.alpha += s.pulseSpeed;
+        if (s.alpha > 0.85 || s.alpha < 0.15) s.pulseSpeed = -s.pulseSpeed;
+
+        if (s.y < 0) s.y = h;
+        if (s.x < 0) s.x = w;
+        if (s.x > w) s.x = 0;
+
+        ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0.1, Math.min(0.9, s.alpha))})`;
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
         ctx.fill();
       }
-      starfieldAnimId = requestAnimationFrame(renderStarfieldFrame);
-  }
+      starfieldAnimId = requestAnimationFrame(renderStarfield);
+    }
 
-  // Stars is the default visual mode; the active pill mirrors the canvas state.
-  if (nowPlayingModal) nowPlayingModal.classList.add(VERSI_BACKDROPS[1].className);
-  if (versiBackdropBtn) {
-    versiBackdropBtn.classList.add('active');
-    versiBackdropBtn.setAttribute('aria-pressed', 'true');
+    if (!starfieldAnimId) starfieldAnimId = requestAnimationFrame(renderStarfield);
   }
-  if (versiBackdropIcon) versiBackdropIcon.textContent = '✨';
-  if (versiBackdropLabel) versiBackdropLabel.textContent = 'Stars';
-  npStarfieldCanvas?.classList.remove('hidden');
 
   // Versi Control Buttons Event Listeners
   if (versiAutoEmojiBtn) {
@@ -10190,94 +8748,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (versiBackdropBtn) {
     versiBackdropBtn.addEventListener('click', () => {
-      isStarsBgMode = !isStarsBgMode;
-      currentVersiBackdropIdx = isStarsBgMode ? 1 : 0;
+      currentVersiBackdropIdx = (currentVersiBackdropIdx + 1) % VERSI_BACKDROPS.length;
       const bg = VERSI_BACKDROPS[currentVersiBackdropIdx];
-      versiBackdropBtn.classList.toggle('active', isStarsBgMode);
-      versiBackdropBtn.setAttribute('aria-pressed', String(isStarsBgMode));
-      if (versiBackdropLabel) versiBackdropLabel.textContent = 'Stars';
-      if (versiBackdropIcon) versiBackdropIcon.textContent = isStarsBgMode ? '✨' : '🌌';
+      if (versiBackdropLabel) versiBackdropLabel.textContent = bg.label;
+      if (versiBackdropIcon) versiBackdropIcon.textContent = bg.icon;
       if (nowPlayingModal) {
         VERSI_BACKDROPS.forEach(b => nowPlayingModal.classList.remove(b.className));
         nowPlayingModal.classList.add(bg.className);
       }
-      if (isStarsBgMode) {
+      if (bg.id === 'starfield') {
         npStarfieldCanvas?.classList.remove('hidden');
         initStarfield();
       } else {
         npStarfieldCanvas?.classList.add('hidden');
-        stopStarfield();
       }
-      showToast(isStarsBgMode ? 'Stars: ON ✨' : 'Stars: OFF');
+      showToast(`Backdrop: ${bg.label}`);
     });
   }
-
-  // Versi Sync Nudge Controls (-0.5s | 0.0s | +0.5s)
-  const versiSyncMinusBtn = document.getElementById('versiSyncMinusBtn');
-  const versiSyncResetBtn = document.getElementById('versiSyncResetBtn');
-  const versiSyncPlusBtn = document.getElementById('versiSyncPlusBtn');
-  const versiSyncRealignBtn = document.getElementById('versiSyncRealignBtn');
-  let realignFeedbackTimer = 0;
-
-  if (versiSyncRealignBtn) {
-    versiSyncRealignBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (!realignLyrics('manual', true)) return;
-      versiSyncRealignBtn.textContent = '✓ Aligned';
-      clearTimeout(realignFeedbackTimer);
-      realignFeedbackTimer = setTimeout(() => {
-        versiSyncRealignBtn.textContent = '↺ Realign';
-        realignFeedbackTimer = 0;
-      }, 1200);
-    });
-  }
-
-  if (versiSyncMinusBtn) {
-    versiSyncMinusBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const step = e.shiftKey ? -2.0 : -0.5;
-      adjustLyricOffset(step);
-      showToast(`Lyrics Offset: ${currentSongLyricOffset > 0 ? '+' : ''}${currentSongLyricOffset.toFixed(1)}s`);
-    });
-  }
-
-  if (versiSyncResetBtn) {
-    versiSyncResetBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      adjustLyricOffset(0);
-      showToast('Lyrics Offset Reset (0.0s)');
-    });
-  }
-
-  if (versiSyncPlusBtn) {
-    versiSyncPlusBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const step = e.shiftKey ? +2.0 : +0.5;
-      adjustLyricOffset(step);
-      showToast(`Lyrics Offset: ${currentSongLyricOffset > 0 ? '+' : ''}${currentSongLyricOffset.toFixed(1)}s`);
-    });
-  }
-
-  // YouTube Music Style Queue Filter Pills (All / Familiar / Discover)
-  function setRadioFilterMode(mode) {
-    currentRadioFilterMode = mode;
-    document.querySelectorAll('.queue-filter-pill').forEach(btn => {
-      btn.classList.toggle('active', btn.getAttribute('data-filter') === mode);
-    });
-    const modeLabel = mode === 'familiar' ? 'Familiar Artists' : mode === 'discover' ? 'Discover New Artists' : 'All Radio Recommendations';
-    showToast(`Queue Filter: ${modeLabel}`);
-    if (currentTrack) {
-      void generateRadioSuggestions(currentTrack, currentRadioFilterMode);
-    }
-  }
-
-  document.querySelectorAll('.queue-filter-pill').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const mode = btn.getAttribute('data-filter') || 'all';
-      setRadioFilterMode(mode);
-    });
-  });
 
   // Global Keyboard Shortcut: ⌘K or Ctrl+K to focus search
   window.addEventListener('keydown', (e) => {
@@ -10341,32 +8828,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const suggestions = new Set();
 
-    // 1. Saavn Autocomplete API (Incredible for Bollywood, Hindi, Punjabi, Artists, and Global)
+    // 1. Primary: YouTube Music Guest-Mode InnerTube Suggestions Engine (POST /music/get_search_suggestions)
     try {
-      const saavnUrl = `https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query=${encodeURIComponent(query)}`;
-      const res = await fetch(saavnUrl);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.songs && data.songs.data) {
-          data.songs.data.slice(0, 4).forEach(s => suggestions.add(s.title.replace(/&quot;/g, '"')));
-        }
-        if (data.artists && data.artists.data) {
-          data.artists.data.slice(0, 2).forEach(a => suggestions.add(a.title.replace(/&quot;/g, '"')));
+      if (window.echoApi?.getSearchSuggestions) {
+        const ytmList = await window.echoApi.getSearchSuggestions(query);
+        if (Array.isArray(ytmList) && ytmList.length > 0) {
+          ytmList.forEach(s => suggestions.add(s));
         }
       }
     } catch (e) {}
 
-    // 2. YouTube Music / Google Suggest API (For Global, Pop, Hip-Hop, Indie, Anime)
-    try {
-      const ytUrl = `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(query)}`;
-      const res = await fetch(ytUrl);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data[1])) {
-          data[1].slice(0, 5).forEach(s => suggestions.add(s));
+    // 2. Saavn Autocomplete API (Incredible for Bollywood, Hindi, Punjabi, Artists, and Global)
+    if (suggestions.size < 6) {
+      try {
+        const saavnUrl = `https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query=${encodeURIComponent(query)}`;
+        const res = await fetch(saavnUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.songs && data.songs.data) {
+            data.songs.data.slice(0, 4).forEach(s => suggestions.add(s.title.replace(/&quot;/g, '"')));
+          }
+          if (data.artists && data.artists.data) {
+            data.artists.data.slice(0, 2).forEach(a => suggestions.add(a.title.replace(/&quot;/g, '"')));
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
+
+    // 3. Fallback: Google Suggest API
+    if (suggestions.size < 4) {
+      try {
+        const ytUrl = `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(query)}`;
+        const res = await fetch(ytUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data[1])) {
+            data[1].slice(0, 5).forEach(s => suggestions.add(s));
+          }
+        }
+      } catch (e) {}
+    }
 
     renderSuggestionsDropdown(filterSearchSuggestionStrings(Array.from(suggestions), query));
   }
@@ -10445,30 +8946,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const suggestions = new Set();
+
+    // 1. Primary: YouTube Music Guest-Mode InnerTube Suggestions Engine
     try {
-      const saavnUrl = `https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query=${encodeURIComponent(query)}`;
-      const res = await fetch(saavnUrl);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.songs && data.songs.data) {
-          data.songs.data.slice(0, 4).forEach(s => suggestions.add(s.title.replace(/&quot;/g, '"')));
-        }
-        if (data.artists && data.artists.data) {
-          data.artists.data.slice(0, 2).forEach(a => suggestions.add(a.title.replace(/&quot;/g, '"')));
+      if (window.echoApi?.getSearchSuggestions) {
+        const ytmList = await window.echoApi.getSearchSuggestions(query);
+        if (Array.isArray(ytmList) && ytmList.length > 0) {
+          ytmList.forEach(s => suggestions.add(s));
         }
       }
     } catch (e) {}
 
-    try {
-      const ytUrl = `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(query)}`;
-      const res = await fetch(ytUrl);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data[1])) {
-          data[1].slice(0, 5).forEach(s => suggestions.add(s));
+    // 2. Saavn Autocomplete
+    if (suggestions.size < 6) {
+      try {
+        const saavnUrl = `https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query=${encodeURIComponent(query)}`;
+        const res = await fetch(saavnUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.songs && data.songs.data) {
+            data.songs.data.slice(0, 4).forEach(s => suggestions.add(s.title.replace(/&quot;/g, '"')));
+          }
+          if (data.artists && data.artists.data) {
+            data.artists.data.slice(0, 2).forEach(a => suggestions.add(a.title.replace(/&quot;/g, '"')));
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
+
+    // 3. Fallback: Google Suggest
+    if (suggestions.size < 4) {
+      try {
+        const ytUrl = `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(query)}`;
+        const res = await fetch(ytUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data[1])) {
+            data[1].slice(0, 5).forEach(s => suggestions.add(s));
+          }
+        }
+      } catch (e) {}
+    }
 
     const items = filterSearchSuggestionStrings(Array.from(suggestions), query);
     if (items.length === 0) {
@@ -10834,7 +9352,7 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let i = 0; i < 6; i++) {
           setTimeout(() => {
             if (socket === desktopSocket && socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify({ type: 'ping', t1: performance.now(), pingSentAtMs: Date.now() }));
+              socket.send(JSON.stringify({ type: 'ping', t1: performance.now() }));
             }
           }, i * 75);
         }
@@ -10842,11 +9360,11 @@ document.addEventListener('DOMContentLoaded', () => {
         roomHeartbeatTimer = setInterval(() => {
           if (socket !== desktopSocket || socket.readyState !== WebSocket.OPEN) return;
           clearTimeout(roomPongTimeout);
-          socket.send(JSON.stringify({ type: 'ping', t1: performance.now(), pingSentAtMs: Date.now() }));
+          socket.send(JSON.stringify({ type: 'ping', t1: performance.now() }));
           roomPongTimeout = setTimeout(() => {
             if (socket === desktopSocket && socket.readyState === WebSocket.OPEN) socket.close();
           }, 10000);
-        }, 5000);
+        }, 15000);
 
         showToast(`Connected to Party Room on ${cleanAddr}! 🟢`);
       };
@@ -10858,9 +9376,6 @@ document.addEventListener('DOMContentLoaded', () => {
             clearTimeout(roomPongTimeout);
             const curRtt = performance.now() - msg.t1;
             satelliteRtt = satelliteRtt === 0 ? curRtt : (satelliteRtt * 0.6 + curRtt * 0.4);
-            if (Number.isFinite(msg.pingSentAtMs)) {
-              satelliteOneWayLatencySec = Math.min(2.5, Math.max(0, (Date.now() - msg.pingSentAtMs) / 2000));
-            }
             const serverNow = msg.serverTime + (satelliteRtt / 2);
             satelliteClockOffset = serverNow - Date.now();
 
@@ -10870,16 +9385,15 @@ document.addEventListener('DOMContentLoaded', () => {
             roomDisconnectWasManual = true;
             if (window.echoLogger) window.echoLogger.error(msg.message || 'Room code was rejected');
             if (satText) satText.textContent = msg.message || 'Room code mismatch';
-          } else if (msg.type === 'state_sync' || msg.type === 'track_change' || msg.type === 'force_snap' || msg.type === 'room-sync-tick') {
+          } else if (msg.type === 'state_sync' || msg.type === 'track_change' || msg.type === 'force_snap') {
             msg.clockOffset = satelliteClockOffset;
             msg.rtt = satelliteRtt;
-            msg.oneWayLatencySec = satelliteOneWayLatencySec;
             if (satCallbacks.length > 0) {
               satCallbacks.forEach(cb => cb(msg));
             } else {
               // The registered room-state callback owns playback dispatch.
               // Keep this fallback for startup ordering, but never dispatch both.
-              handleIncomingHostPlayback(msg, Boolean(msg.forceSnap));
+              handleIncomingHostPlayback(msg);
             }
           } else if (msg.type === 'pulse') {
             triggerAcousticChirp(msg.targetServerTime);
@@ -11199,7 +9713,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeSatelliteRoom = '';
   let satelliteClockOffset = 0;
   let satelliteRtt = 0;
-  let satelliteOneWayLatencySec = 0;
   let satelliteBtDelayMs = 0;
   let satelliteHostOutputLatencyMs = 0;
   let lastSatelliteHostMsg = null;
@@ -11207,15 +9720,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let satellitePlaybackSyncKey = '';
   const satelliteStreamUrlPromises = new Map();
 
-  async function resolveSatelliteStreamUrlOnce(trackOrId, trackTitle = '') {
-    const track = trackOrId && typeof trackOrId === 'object' ? trackOrId : { id: trackOrId, title: trackTitle };
-    const trackId = String(track.id || '');
+  async function resolveSatelliteStreamUrlOnce(trackId, trackTitle = '') {
     if (!trackId || typeof getOrResolveStreamUrl !== 'function') return null;
     const cached = streamUrlCache?.get(trackId);
     if (cached?.url) return cached.url;
     if (satelliteStreamUrlPromises.has(trackId)) return satelliteStreamUrlPromises.get(trackId);
 
-    const request = getOrResolveStreamUrl(track);
+    const request = getOrResolveStreamUrl(trackId, trackTitle);
     satelliteStreamUrlPromises.set(trackId, request);
     try {
       return await request;
@@ -11431,7 +9942,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Seamless DJ Crossfade • Micro-Pitch Rate Adjustment • Zero-Break Deck Swap
   // ------------------------------------------------------------------------
   if (window.echoApi && window.echoApi.onSatelliteStateSync) {
-    window.echoApi.onSatelliteStateSync(async (msg) => {
+    window.echoApi.onSatelliteStateSync((msg) => {
       if (!msg) return;
       lastSatelliteHostMsg = msg;
       isSatelliteConnected = true;
@@ -11462,18 +9973,12 @@ document.addEventListener('DOMContentLoaded', () => {
         satelliteStateBadge.style.color = msg.isPlaying ? '#34d399' : '#f59e0b';
       }
 
-      await handleIncomingHostPlayback(msg, Boolean(msg.forceSnap));
-      if (roomRealignPending && msg.type === 'room-sync-tick') {
-        roomRealignPending = false;
-        flashRoomRealignButton();
-      }
+      handleIncomingHostPlayback(msg);
     });
   }
 
   async function handleIncomingHostPlayback(msg, forceSnap = false) {
     if (!msg) return;
-    if (!Number.isFinite(msg.position) && Number.isFinite(msg.positionSec)) msg = { ...msg, position: msg.positionSec };
-    if (!Number.isFinite(msg.hostTime) && Number.isFinite(msg.hostSentAtMs)) msg = { ...msg, hostTime: msg.hostSentAtMs };
     const trackId = msg.track?.id || '';
     const incomingTrackId = msg.incomingTrack?.id || (msg.isCrossfading ? (msg.nextTrack?.id || '') : '');
     const syncKey = `${trackId}\u001f${incomingTrackId}\u001f${Boolean(msg.isCrossfading)}\u001f${Boolean(msg.isPlaying)}`;
@@ -11494,10 +9999,7 @@ document.addEventListener('DOMContentLoaded', () => {
       : 0;
     const calSec = ((satelliteBtDelayMs || 0) + outputLatencyDeltaMs) / 1000;
     const currentHostNow = Date.now() + satelliteClockOffset;
-    const stateSentAtMs = Number(msg.hostSentAtMs || msg.hostTime || msg.timestamp);
-    const elapsedSinceMeasure = msg.isPlaying && Number.isFinite(stateSentAtMs)
-      ? Math.max(0, (currentHostNow - stateSentAtMs) / 1000) + Math.max(0, Number(msg.oneWayLatencySec) || satelliteOneWayLatencySec)
-      : 0;
+    const elapsedSinceMeasure = msg.hostTime ? Math.max(0, (currentHostNow - msg.hostTime) / 1000) : 0;
 
     // A. Host Paused
     if (!msg.isPlaying) {
@@ -11527,7 +10029,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Buffer incoming track on idle deck if not already loaded
       let incomingUrl = (typeof streamUrlCache !== 'undefined' && streamUrlCache.get(incomingId)?.url);
       if (!incomingUrl && typeof getOrResolveStreamUrl === 'function') {
-        incomingUrl = await resolveSatelliteStreamUrlOnce(msg.incomingTrack);
+        incomingUrl = await resolveSatelliteStreamUrlOnce(incomingId, msg.incomingTrack.title);
       }
       if (syncSeq !== satellitePlaybackSyncSeq) return;
 
@@ -11590,7 +10092,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (typeof currentTrack === 'undefined' || !currentTrack || currentTrack.id !== msg.track.id) {
         let streamUrl = (typeof streamUrlCache !== 'undefined' && streamUrlCache.get(msg.track.id)?.url);
         if (!streamUrl && typeof getOrResolveStreamUrl === 'function') {
-          streamUrl = await resolveSatelliteStreamUrlOnce(msg.track);
+          streamUrl = await resolveSatelliteStreamUrlOnce(msg.track.id, msg.track.title);
         }
         if (syncSeq !== satellitePlaybackSyncSeq) return;
 
@@ -11663,7 +10165,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (curActiveAudio) {
         const Kp = 0.25;
         const speedDelta = -skew * Kp;
-        const targetRate = Math.max(0.96, Math.min(1.04, 1.0 + speedDelta));
+        const targetRate = Math.max(0.97, Math.min(1.03, 1.0 + speedDelta));
         curActiveAudio.playbackRate = targetRate;
       }
     } else {
@@ -11698,6 +10200,373 @@ document.addEventListener('DOMContentLoaded', () => {
       triggerAcousticChirp(targetServerTime);
     });
   }
+
+  // ------------------------------------------------------------------------
+  // 1-TAP 9:16 KINETIC LYRIC CARD EXPORTER (1080 x 1920 CANVAS)
+  // ------------------------------------------------------------------------
+  function initLyricCardExporter() {
+    const modal = document.getElementById('lyricCardModalBackdrop');
+    const openBtn = document.getElementById('versiShareLyricCardBtn');
+    const closeBtn = document.getElementById('closeLyricCardModalBtn');
+    const exportBtn = document.getElementById('exportLyricCardBtn');
+    const linePicker = document.getElementById('lyricCardLinePicker');
+    const canvas = document.getElementById('lyricCardPreviewCanvas');
+
+    let selectedIndices = new Set();
+
+    const drawCard = async () => {
+      if (!canvas || !currentTrack) return;
+      const ctx = canvas.getContext('2d');
+      const W = 1080;
+      const H = 1920;
+
+      // 1. Deep Neutral Background (#0D0D0F)
+      ctx.fillStyle = '#0D0D0F';
+      ctx.fillRect(0, 0, W, H);
+
+      // 2. Blurred & Saturated Album Art Background + Apple-Editorial 58% Scrim
+      const coverUrl = currentTrack.artwork || currentTrack.thumbnail || 'default-art.png';
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise((res) => {
+          img.onload = res;
+          img.onerror = () => res();
+          img.src = coverUrl;
+        });
+
+        if (img.width > 0) {
+          ctx.save();
+          ctx.filter = 'blur(64px) saturate(180%) brightness(0.48)';
+          const scale = Math.max(W / img.width, H / img.height) * 1.25;
+          const sw = img.width * scale;
+          const sh = img.height * scale;
+          ctx.drawImage(img, (W - sw) / 2, (H - sh) / 2, sw, sh);
+          ctx.restore();
+
+          // 58% Dark Gradient Scrim (#0D0D0F)
+          const scrim = ctx.createLinearGradient(0, 0, 0, H);
+          scrim.addColorStop(0, 'rgba(13, 13, 15, 0.42)');
+          scrim.addColorStop(0.35, 'rgba(13, 13, 15, 0.58)');
+          scrim.addColorStop(0.70, 'rgba(13, 13, 15, 0.62)');
+          scrim.addColorStop(1, 'rgba(13, 13, 15, 0.88)');
+          ctx.fillStyle = scrim;
+          ctx.fillRect(0, 0, W, H);
+        }
+      } catch (_) {}
+
+      // 3. Subtle Ambient Radial Vignette (Crimson Rose #FA2D48 & Sky Blue #38BDF8)
+      ctx.save();
+      const gradCrimson = ctx.createRadialGradient(240, 480, 50, 240, 480, 600);
+      gradCrimson.addColorStop(0, 'rgba(250, 45, 72, 0.22)');
+      gradCrimson.addColorStop(1, 'rgba(250, 45, 72, 0)');
+      ctx.fillStyle = gradCrimson;
+      ctx.fillRect(0, 0, W, H);
+
+      const gradCyan = ctx.createRadialGradient(840, 1420, 50, 840, 1420, 650);
+      gradCyan.addColorStop(0, 'rgba(56, 189, 248, 0.20)');
+      gradCyan.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      ctx.fillStyle = gradCyan;
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+
+      // Master Font Stack strictly including color emoji fonts
+      const fontStack = '"SF Pro Display", "Plus Jakarta Sans", "Noto Sans Devanagari", "Noto Sans Gurmukhi", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+
+      // 4. Top Header (y = 180): 160x160 rounded (28px) album art + bold Title (44px) + Artist (30px)
+      const artX = 96;
+      const artY = 180;
+      const artSize = 160;
+      const artRadius = 28;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(artX + artRadius, artY);
+      ctx.lineTo(artX + artSize - artRadius, artY);
+      ctx.quadraticCurveTo(artX + artSize, artY, artX + artSize, artY + artRadius);
+      ctx.lineTo(artX + artSize, artY + artSize - artRadius);
+      ctx.quadraticCurveTo(artX + artSize, artY + artSize, artX + artSize - artRadius, artY + artSize);
+      ctx.lineTo(artX + artRadius, artY + artSize);
+      ctx.quadraticCurveTo(artX, artY + artSize, artX, artY + artSize - artRadius);
+      ctx.lineTo(artX, artY + artRadius);
+      ctx.quadraticCurveTo(artX, artY, artX + artRadius, artY);
+      ctx.closePath();
+      ctx.clip();
+
+      try {
+        const hImg = new Image();
+        hImg.crossOrigin = 'anonymous';
+        await new Promise((res) => {
+          hImg.onload = res;
+          hImg.onerror = () => res();
+          hImg.src = coverUrl;
+        });
+        if (hImg.width > 0) ctx.drawImage(hImg, artX, artY, artSize, artSize);
+      } catch (_) {}
+      ctx.restore();
+
+      // Subtle border around album art
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(artX + artRadius, artY);
+      ctx.lineTo(artX + artSize - artRadius, artY);
+      ctx.quadraticCurveTo(artX + artSize, artY, artX + artSize, artY + artRadius);
+      ctx.lineTo(artX + artSize, artY + artSize - artRadius);
+      ctx.quadraticCurveTo(artX + artSize, artY + artSize, artX + artSize - artRadius, artY + artSize);
+      ctx.lineTo(artX + artRadius, artY + artSize);
+      ctx.quadraticCurveTo(artX, artY + artSize, artX, artY + artSize - artRadius);
+      ctx.lineTo(artX, artY + artRadius);
+      ctx.quadraticCurveTo(artX, artY, artX + artRadius, artY);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+
+      // Track Title (bold 44px)
+      ctx.font = `700 44px ${fontStack}`;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      const titleX = artX + artSize + 28;
+      let titleStr = String(currentTrack.title || 'MeloPair');
+      while (ctx.measureText(titleStr).width > 680 && titleStr.length > 5) {
+        titleStr = titleStr.slice(0, -4) + '...';
+      }
+      ctx.fillText(titleStr, titleX, artY + 54);
+
+      // Artist (500 30px)
+      ctx.font = `500 30px ${fontStack}`;
+      ctx.fillStyle = '#A1A1AA';
+      let artistStr = String(currentTrack.artist || 'Unknown Artist');
+      while (ctx.measureText(artistStr).width > 680 && artistStr.length > 5) {
+        artistStr = artistStr.slice(0, -4) + '...';
+      }
+      ctx.fillText(artistStr, titleX, artY + 112);
+
+      // 5. Center Block: Selected 1-4 lines in bold 58px #FFFFFF (line-height: 1.38, 96px side padding) with subtle drop shadow
+      const selectedLines = Array.from(selectedIndices).sort((a,b)=>a-b).map(idx => lyricsData[idx]).filter(Boolean);
+      const linesToRender = selectedLines.length > 0 ? selectedLines : (lyricsData.slice(0, 2));
+
+      const fontSize = 58;
+      const lineHeight = Math.round(fontSize * 1.38); // 80px
+      const maxTextWidth = W - (96 * 2); // 888px
+      const wrappedParagraphs = [];
+
+      ctx.font = `700 ${fontSize}px ${fontStack}`;
+
+      linesToRender.forEach(lineObj => {
+        let rawText = String(lineObj.text || '').trim();
+        const decoratedText = (window.EmojiMapper?.decorateLine)
+          ? window.EmojiMapper.decorateLine(rawText, true)
+          : rawText;
+
+        const words = decoratedText.split(/\s+/).filter(Boolean);
+        let curLine = '';
+        const pLines = [];
+        for (const w of words) {
+          const testLine = curLine ? `${curLine} ${w}` : w;
+          if (ctx.measureText(testLine).width > maxTextWidth && curLine) {
+            pLines.push(curLine);
+            curLine = w;
+          } else {
+            curLine = testLine;
+          }
+        }
+        if (curLine) pLines.push(curLine);
+        wrappedParagraphs.push(pLines);
+      });
+
+      const totalLinesCount = wrappedParagraphs.reduce((acc, p) => acc + p.length, 0);
+      const paragraphSpacing = 40;
+      const totalTextHeight = totalLinesCount * lineHeight + (wrappedParagraphs.length - 1) * paragraphSpacing;
+
+      // Center vertically between header bottom (340) and footer top (1760)
+      const verticalCenter = 1050;
+      let startY = Math.max(460, verticalCenter - Math.round(totalTextHeight / 2));
+
+      ctx.save();
+      ctx.font = `700 ${fontSize}px ${fontStack}`;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+      ctx.shadowBlur = 18;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 4;
+
+      wrappedParagraphs.forEach((pLines) => {
+        pLines.forEach(lText => {
+          ctx.fillText(lText, 96, startY);
+          startY += lineHeight;
+        });
+        startY += paragraphSpacing;
+      });
+      ctx.restore();
+
+      // 6. Bottom Footer (y = 1760): minimal frosted MeloPair pill badge
+      const footerY = 1760;
+      const pillW = 220;
+      const pillH = 58;
+      const pillX = (W - pillW) / 2;
+      const pillR = 29;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(pillX + pillR, footerY);
+      ctx.lineTo(pillX + pillW - pillR, footerY);
+      ctx.quadraticCurveTo(pillX + pillW, footerY, pillX + pillW, footerY + pillR);
+      ctx.lineTo(pillX + pillW, footerY + pillH - pillR);
+      ctx.quadraticCurveTo(pillX + pillW, footerY + pillH, pillX + pillW - pillR, footerY + pillH);
+      ctx.lineTo(pillX + pillR, footerY + pillH);
+      ctx.quadraticCurveTo(pillX, footerY + pillH, pillX, footerY + pillH - pillR);
+      ctx.lineTo(pillX, footerY + pillR);
+      ctx.quadraticCurveTo(pillX, footerY, pillX + pillR, footerY);
+      ctx.closePath();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.10)';
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      ctx.stroke();
+
+      ctx.font = `600 24px ${fontStack}`;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🎵 MeloPair', W / 2, footerY + pillH / 2);
+      ctx.restore();
+    };
+
+    if (openBtn) {
+      openBtn.addEventListener('click', () => {
+        if (!currentTrack) {
+          showToast('Play a song first to share its lyric card');
+          return;
+        }
+        if (!lyricsData || !lyricsData.length) {
+          showToast('No lyrics found for this song');
+          return;
+        }
+
+        if (modal) modal.classList.remove('hidden');
+
+        // Reset selection on modal open and auto-select ONLY currently playing lyric line (+ next line)
+        selectedIndices = new Set();
+        let curIdx = (typeof activeLyricIndex === 'number' && activeLyricIndex >= 0 && activeLyricIndex < lyricsData.length)
+          ? activeLyricIndex
+          : -1;
+
+        if (curIdx === -1) {
+          for (let i = 0; i < lyricsData.length; i++) {
+            const raw = (lyricsData[i].text || '').trim();
+            if (raw.length > 5) {
+              curIdx = i;
+              break;
+            }
+          }
+          if (curIdx === -1) curIdx = 0;
+        }
+
+        selectedIndices.add(curIdx);
+        if (curIdx + 1 < lyricsData.length) {
+          selectedIndices.add(curIdx + 1);
+        }
+
+        if (linePicker) {
+          linePicker.innerHTML = '';
+          lyricsData.forEach((line, idx) => {
+            const div = document.createElement('div');
+            div.className = `lyric-card-line-item ${selectedIndices.has(idx) ? 'selected' : ''}`;
+            const decorated = (window.EmojiMapper?.decorateLine)
+              ? window.EmojiMapper.decorateLine(line.text, true)
+              : line.text;
+            div.textContent = decorated;
+            div.dataset.index = idx;
+            div.addEventListener('click', () => {
+              if (selectedIndices.has(idx)) {
+                if (selectedIndices.size > 1) selectedIndices.delete(idx);
+              } else {
+                if (selectedIndices.size >= 4) {
+                  const sorted = Array.from(selectedIndices).sort((a,b)=>a-b);
+                  selectedIndices.delete(sorted[0]);
+                }
+                selectedIndices.add(idx);
+              }
+
+              linePicker.querySelectorAll('.lyric-card-line-item').forEach(el => {
+                const elIdx = parseInt(el.dataset.index, 10);
+                el.classList.toggle('selected', selectedIndices.has(elIdx));
+              });
+
+              drawCard();
+            });
+            linePicker.appendChild(div);
+          });
+
+          // Auto-scroll so currently playing line is centered in view
+          setTimeout(() => {
+            const activeEl = linePicker.querySelector('.lyric-card-line-item.selected');
+            if (activeEl) {
+              activeEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+          }, 60);
+        }
+
+        drawCard();
+      });
+    }
+
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        if (modal) modal.classList.add('hidden');
+      });
+    }
+
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.classList.add('hidden');
+      });
+    }
+
+    if (exportBtn && canvas) {
+      exportBtn.addEventListener('click', async () => {
+        const dataUrl = canvas.toDataURL('image/png');
+        const songTitle = String(currentTrack?.title || 'MeloPair').replace(/[^\w\s.-]/gi, '_');
+        const fileName = `${songTitle} - MeloPair Lyric Card.png`;
+
+        if (window.echoApi?.exportLyricCard) {
+          const res = await window.echoApi.exportLyricCard(dataUrl, fileName);
+          if (res?.success) {
+            showToast('Lyric card saved to disk! ✨');
+            if (modal) modal.classList.add('hidden');
+            return;
+          } else if (res?.canceled) {
+            return;
+          }
+        }
+
+        if (window.MeloPairNativeBridge?.shareImage) {
+          window.MeloPairNativeBridge.shareImage(dataUrl, fileName);
+          showToast('Sharing lyric card! ✨');
+          if (modal) modal.classList.add('hidden');
+          return;
+        }
+
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast('Lyric card downloaded! ✨');
+      });
+    }
+  }
+
+  // Initialize lyric card exporter
+  initLyricCardExporter();
 
   // Initialize saved host label on boot
   updateSavedHostDisplay();

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, safeStorage, dialog } = require('electron');
 const path = require('path');
 const http = require('http');
 const https = require('https');
@@ -9,16 +9,6 @@ const { WebSocketServer } = require('ws');
 const QRCode = require('qrcode');
 const CryptoJS = require('crypto-js');
 const { randomBytes, timingSafeEqual, createECDH, createDecipheriv, hkdfSync } = require('crypto');
-
-// Electron does not make its userData path follow Chromium's --user-data-dir
-// consistently. Honor it explicitly so fresh-profile diagnostics and portable
-// launches use the requested writable directory before any paths are derived.
-const requestedUserDataDir = process.argv.find(argument => argument.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length)
-  || process.env.MELOPAIR_USER_DATA_DIR;
-if (requestedUserDataDir) {
-  try { app.setPath('userData', path.resolve(requestedUserDataDir)); }
-  catch (error) { console.error('[Profile] Could not apply requested user data folder:', error.message); }
-}
 
 const firebaseConfigPath = path.join(__dirname, 'firebase-hosting', 'firebase-config.json');
 let firebaseWebConfig = null;
@@ -297,8 +287,8 @@ async function refreshFirebaseSession(session) {
   if (!lookupResponse.ok || !user) return { profile: session.profile || null, offline: true };
 
   const profile = sanitizeFirebaseProfile(user);
-  await saveFirebaseSession({ refreshToken: data.refresh_token || session.refreshToken, profile });
-  return { profile, offline: false };
+  await saveFirebaseSession({ refreshToken: data.refresh_token || session.refreshToken, profile, idToken: data.id_token });
+  return { profile: { ...profile, idToken: data.id_token }, offline: false };
 }
 
 function decodeBase64Url(value) {
@@ -326,8 +316,8 @@ async function acceptFirebaseSession(idToken, refreshToken) {
   }
 
   const profile = sanitizeFirebaseProfile(user);
-  await saveFirebaseSession({ refreshToken, profile });
-  return profile;
+  await saveFirebaseSession({ refreshToken, profile, idToken });
+  return { ...profile, idToken };
 }
 
 async function handleFirebaseAuthProtocol(rawUrl) {
@@ -416,13 +406,104 @@ function getRoomAddressInfo(roomId = currentRoomId) {
   const localIp = lanAddresses[0] || '127.0.0.1';
   const lanJoinUrl = `http://${localIp}:${proxyPort}/room/${roomId}`;
   const tunnelJoinUrl = globalTunnelUrl ? `${globalTunnelUrl}/room/${roomId}` : null;
+  const melopairDeepLink = `melopair://room/${roomId}`;
   return {
     localIp,
     lanAddresses,
     lanJoinUrl,
     tunnelJoinUrl,
-    joinUrl: networkMode === 'global' && tunnelJoinUrl ? tunnelJoinUrl : lanJoinUrl
+    melopairDeepLink,
+    joinUrl: melopairDeepLink
   };
+}
+
+const FIREBASE_RTDB_BASE = 'https://orbit-57cd6-default-rtdb.firebaseio.com';
+let lastFirebaseSyncTime = 0;
+
+function syncRoomMetaToFirebaseRtdb(roomId) {
+  if (!roomId) return;
+  try {
+    const metaPayload = JSON.stringify({
+      hostUid: 'windows_desktop_host',
+      hostName: 'Echo Desktop (Windows)',
+      createdAt: { '.sv': 'timestamp' },
+      active: true
+    });
+    const url = new URL(`${FIREBASE_RTDB_BASE}/rooms/${roomId}/meta.json`);
+    const req = https.request(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(metaPayload)
+      },
+      timeout: 3000
+    }, (res) => { res.resume(); });
+    req.on('error', () => {});
+    req.write(metaPayload);
+    req.end();
+
+    const memberPayload = JSON.stringify({
+      name: 'Echo Desktop (Windows)',
+      platform: 'windows',
+      joinedAt: { '.sv': 'timestamp' }
+    });
+    const memUrl = new URL(`${FIREBASE_RTDB_BASE}/rooms/${roomId}/members/windows_desktop_host.json`);
+    const memReq = https.request(memUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(memberPayload)
+      },
+      timeout: 3000
+    }, (res) => { res.resume(); });
+    memReq.on('error', () => {});
+    memReq.write(memberPayload);
+    memReq.end();
+  } catch (err) {
+    // Non-blocking
+  }
+}
+
+function syncRoomStateToFirebaseRtdb(roomId, data, force = false) {
+  if (!roomId) return;
+  const now = Date.now();
+  if (!force && now - lastFirebaseSyncTime < 800) return;
+  lastFirebaseSyncTime = now;
+
+  try {
+    const track = data.track || null;
+    const isPlaying = Boolean(data.isPlaying);
+    const positionSec = Number(data.positionSec != null ? data.positionSec : data.position) || 0;
+
+    const payload = JSON.stringify({
+      trackId: track ? String(track.id || track.videoId || '') : '',
+      title: track ? String(track.title || '') : '',
+      artist: track ? String(track.artist || 'Artist') : '',
+      thumbnail: track ? String(track.artwork || track.thumbnail || '') : '',
+      source: 'youtube',
+      durationMs: Math.round((track?.duration || 0) * 1000),
+      positionMs: Math.round(positionSec * 1000),
+      isPlaying: isPlaying,
+      updatedAt: { '.sv': 'timestamp' },
+      updatedBy: 'windows_desktop_host',
+      seq: Number(data.sequenceId || 1)
+    });
+
+    const url = new URL(`${FIREBASE_RTDB_BASE}/rooms/${roomId}/state.json`);
+    const req = https.request(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      },
+      timeout: 3000
+    }, (res) => { res.resume(); });
+    req.on('error', () => {});
+    req.write(payload);
+    req.end();
+  } catch (err) {
+    // Non-blocking
+  }
 }
 
 function getLanRoomStreamUrl(trackId) {
@@ -957,299 +1038,7 @@ function startAudioProxy() {
 }
 
 const YT_DLP_DLLS = ['vcruntime140.dll', 'msvcp140.dll'];
-const REQUIRED_RUNTIME_BINARIES = ['yt-dlp.exe', 'ffmpeg.exe', 'ffprobe.exe', 'cloudflared.exe'];
-const runtimeBinDir = path.join(app.getPath('userData'), 'bin');
-let runtimeDependenciesPromise = null;
-let runtimeDependencyStatus = null;
-const runtimeVersionChecks = new Map();
-const bundledVersionChecks = new Map();
-const runtimeUpgradeNeeded = new Set();
-let lastYtDlpRepairAt = 0;
-let ytDlpRepairPromise = null;
 const streamFailureReasons = new Map();
-let releaseProfileInitialization;
-const profileInitializationGate = new Promise(resolve => { releaseProfileInitialization = resolve; });
-
-function publishDependencyStatus(state, detail = '', percent = null) {
-  runtimeDependencyStatus = { state, detail, percent };
-  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-    mainWindow.webContents.send('dependency-status', runtimeDependencyStatus);
-  }
-}
-
-function spawnVersionCheck(binaryPath, args, timeoutMs = 9000) {
-  return new Promise(resolve => {
-    let output = '';
-    let settled = false;
-    let child;
-    const finish = ok => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(ok);
-    };
-    const timer = setTimeout(() => {
-      try { child?.kill(); } catch {}
-      finish(false);
-    }, timeoutMs);
-    try {
-      child = spawn(binaryPath, args, { windowsHide: true, cwd: path.dirname(binaryPath) });
-      child.stdout?.on('data', chunk => { output += chunk.toString(); });
-      child.stderr?.on('data', chunk => { output += chunk.toString(); });
-      child.once('error', () => finish(false));
-      child.once('close', code => finish(code === 0 && output.trim().length > 0));
-    } catch { finish(false); }
-  });
-}
-
-function readBinaryVersion(binaryPath, args, timeoutMs = 9000) {
-  return new Promise(resolve => {
-    let output = '';
-    let settled = false;
-    let child;
-    const finish = value => { if (settled) return; settled = true; clearTimeout(timer); resolve(value); };
-    const timer = setTimeout(() => { try { child?.kill(); } catch {} finish(null); }, timeoutMs);
-    try {
-      child = spawn(binaryPath, args, { windowsHide: true, cwd: path.dirname(binaryPath) });
-      child.stdout?.on('data', chunk => { output += chunk.toString(); });
-      child.stderr?.on('data', chunk => { output += chunk.toString(); });
-      child.once('error', () => finish(null));
-      child.once('close', code => finish(code === 0 && output.trim() ? output.trim() : null));
-    } catch { finish(null); }
-  });
-}
-
-function isVersionNewer(candidate, current) {
-  const tokens = value => String(value || '').match(/\d+(?:\.\d+){1,4}/)?.[0]?.split('.').map(Number) || [];
-  const left = tokens(candidate);
-  const right = tokens(current);
-  if (!left.length || !right.length) return false;
-  for (let index = 0; index < Math.max(left.length, right.length); index++) {
-    const a = left[index] || 0;
-    const b = right[index] || 0;
-    if (a !== b) return a > b;
-  }
-  return false;
-}
-
-function downloadHttpsFile(url, targetPath, onProgress, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    let parsed;
-    try { parsed = new URL(url); } catch { return reject(new Error('Invalid download URL.')); }
-    if (parsed.protocol !== 'https:') return reject(new Error('Runtime downloads require HTTPS.'));
-    if (redirects > 8) return reject(new Error('Too many download redirects.'));
-    const tempPath = `${targetPath}.tmp`;
-    let file;
-    const request = https.get(parsed, { headers: { 'User-Agent': 'MeloPair Runtime Repair' } }, response => {
-      if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
-        response.resume();
-        const redirectUrl = new URL(response.headers.location, parsed).href;
-        if (!redirectUrl.startsWith('https://')) return reject(new Error('Download redirected away from HTTPS.'));
-        return downloadHttpsFile(redirectUrl, targetPath, onProgress, redirects + 1).then(resolve, reject);
-      }
-      if (response.statusCode !== 200) {
-        response.resume();
-        return reject(new Error(`Download returned HTTP ${response.statusCode}.`));
-      }
-      const total = Number(response.headers['content-length']) || 0;
-      let received = 0;
-      try { file = fs.createWriteStream(tempPath); } catch (error) { return reject(error); }
-      response.on('data', chunk => {
-        received += chunk.length;
-        if (total > 0) onProgress?.(Math.min(99, Math.floor(received / total * 100)));
-      });
-      response.pipe(file);
-      file.once('error', error => { request.destroy(); try { fs.unlinkSync(tempPath); } catch {} reject(error); });
-      file.once('finish', () => file.close(async asyncError => {
-        if (asyncError) { try { fs.unlinkSync(tempPath); } catch {} return reject(asyncError); }
-        try {
-          if (!fs.existsSync(tempPath) || fs.statSync(tempPath).size <= 100000) throw new Error('Downloaded runtime file is empty or incomplete.');
-          try {
-            await fs.promises.rename(tempPath, targetPath);
-          } catch (error) {
-            if (!['EEXIST', 'EPERM', 'EACCES'].includes(error.code)) throw error;
-            try { await fs.promises.unlink(targetPath); } catch {}
-            await fs.promises.rename(tempPath, targetPath);
-          }
-          onProgress?.(100);
-          resolve(targetPath);
-        } catch (error) { try { fs.unlinkSync(tempPath); } catch {} reject(error); }
-      }));
-    });
-    request.setTimeout(90000, () => request.destroy(new Error('Runtime download timed out.')));
-    request.once('error', error => { try { file?.destroy(); } catch {} try { fs.unlinkSync(tempPath); } catch {} reject(error); });
-  });
-}
-
-async function copyBundledRuntimeBinary(name, force = false) {
-  const sourcePath = getBundledBinaryPath(name);
-  if (!sourcePath) return false;
-  try {
-    if (fs.statSync(sourcePath).size <= 100000) return false;
-    await fs.promises.mkdir(runtimeBinDir, { recursive: true });
-    const targetPath = path.join(runtimeBinDir, name);
-    const sourceStats = await fs.promises.stat(sourcePath);
-    let targetStats = null;
-    try { targetStats = await fs.promises.stat(targetPath); } catch {}
-    if (force || !targetStats || targetStats.size !== sourceStats.size) {
-      const tempPath = `${targetPath}.tmp`;
-      await fs.promises.copyFile(sourcePath, tempPath);
-      await fs.promises.rename(tempPath, targetPath).catch(async error => {
-        try { await fs.promises.unlink(targetPath); } catch {}
-        await fs.promises.rename(tempPath, targetPath);
-      });
-    }
-    return true;
-  } catch (error) {
-    console.warn(`[Runtime] Could not stage bundled ${name}:`, error.message);
-    return false;
-  }
-}
-
-async function isRuntimeBinaryValid(name) {
-  const targetPath = path.join(runtimeBinDir, name);
-  try {
-    const stat = await fs.promises.stat(targetPath);
-    if (stat.size <= 100000) return false;
-    const signature = `${stat.size}:${stat.mtimeMs}`;
-    const cached = runtimeVersionChecks.get(name);
-    if (cached?.signature === signature) return cached.valid;
-    const args = name === 'ffmpeg.exe' || name === 'ffprobe.exe' ? ['-version'] : ['--version'];
-    const output = await readBinaryVersion(targetPath, args);
-    const valid = Boolean(output);
-    const version = output?.match(/\d+(?:\.\d+){1,4}/)?.[0] || null;
-    runtimeVersionChecks.set(name, { signature, valid, version });
-    return valid;
-  } catch { return false; }
-}
-
-async function ensureRuntimeDependencies() {
-  if (runtimeDependenciesPromise) return runtimeDependenciesPromise;
-  runtimeDependenciesPromise = (async () => {
-    await fs.promises.mkdir(runtimeBinDir, { recursive: true });
-    runtimeUpgradeNeeded.clear();
-    let needsRepair = false;
-    for (const name of REQUIRED_RUNTIME_BINARIES) {
-      const valid = await isRuntimeBinaryValid(name);
-      const bundledPath = getBundledBinaryPath(name);
-      if (!valid) { needsRepair = true; continue; }
-      if (bundledPath) {
-        const targetVersion = runtimeVersionChecks.get(name)?.version;
-        let bundledVersion = bundledVersionChecks.get(name)?.version;
-        if (!bundledVersion) {
-          const args = name === 'ffmpeg.exe' || name === 'ffprobe.exe' ? ['-version'] : ['--version'];
-          const output = await readBinaryVersion(bundledPath, args);
-          bundledVersion = output?.match(/\d+(?:\.\d+){1,4}/)?.[0] || null;
-          bundledVersionChecks.set(name, { version: bundledVersion });
-        }
-        if (isVersionNewer(bundledVersion, targetVersion)) {
-          runtimeUpgradeNeeded.add(name);
-          needsRepair = true;
-        }
-      }
-    }
-    if (needsRepair) publishDependencyStatus('checking', 'Preparing audio and Rooms tools…');
-
-    for (const dll of YT_DLP_DLLS) {
-      const targetPath = path.join(runtimeBinDir, dll);
-      const bundledPath = getBundledBinaryPath(dll);
-      let valid = false;
-      try {
-        const targetStat = await fs.promises.stat(targetPath);
-        const bundledStat = bundledPath ? await fs.promises.stat(bundledPath) : null;
-        valid = targetStat.size > 50000 && (!bundledStat || targetStat.size === bundledStat.size);
-      } catch {}
-      if (!valid) await copyBundledRuntimeBinary(dll);
-    }
-
-    for (const name of REQUIRED_RUNTIME_BINARIES) {
-      const targetPath = path.join(runtimeBinDir, name);
-      if (await isRuntimeBinaryValid(name) && !runtimeUpgradeNeeded.has(name)) continue;
-
-      const copied = await copyBundledRuntimeBinary(name, runtimeUpgradeNeeded.has(name));
-      if (copied && await isRuntimeBinaryValid(name)) continue;
-
-      if (name === 'yt-dlp.exe' || name === 'cloudflared.exe') {
-        const source = name === 'yt-dlp.exe'
-          ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
-          : 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe';
-        publishDependencyStatus('downloading', `Repairing ${name === 'yt-dlp.exe' ? 'audio streaming' : 'Rooms connection'}…`, null);
-        await downloadHttpsFile(source, targetPath, percent => publishDependencyStatus('downloading', `Repairing ${name === 'yt-dlp.exe' ? 'audio streaming' : 'Rooms connection'}…`, percent));
-        runtimeVersionChecks.delete(name);
-        if (!await isRuntimeBinaryValid(name)) throw new Error(`The downloaded ${name} failed its launch check.`);
-        continue;
-      }
-
-      publishDependencyStatus('downloading', 'Repairing audio tools…', null);
-      const archivePath = path.join(runtimeBinDir, 'ffmpeg-repair.zip');
-      const extractDir = path.join(runtimeBinDir, 'ffmpeg-repair');
-      await downloadHttpsFile('https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip', archivePath, percent => publishDependencyStatus('downloading', 'Repairing audio tools…', percent));
-      await fs.promises.rm(extractDir, { recursive: true, force: true });
-      await fs.promises.mkdir(extractDir, { recursive: true });
-      const tarPath = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'tar.exe');
-      await new Promise((resolve, reject) => {
-        const child = spawn(tarPath, ['-xf', archivePath, '-C', extractDir], { windowsHide: true, env: { ...process.env, PATH: `${process.env.WINDIR || 'C:\\Windows'}\\System32;${process.env.WINDIR || 'C:\\Windows'}` } });
-        child.once('error', reject);
-        child.once('close', code => code === 0 ? resolve() : reject(new Error(`Windows archive extraction failed (${code}).`)));
-      });
-      for (const executable of ['ffmpeg.exe', 'ffprobe.exe']) {
-        const candidate = findFileRecursively(extractDir, executable);
-        if (!candidate) throw new Error(`The audio archive did not contain ${executable}.`);
-        const staged = path.join(runtimeBinDir, executable);
-        await fs.promises.copyFile(candidate, `${staged}.tmp`);
-        await fs.promises.rename(`${staged}.tmp`, staged).catch(async error => { try { await fs.promises.unlink(staged); } catch {} await fs.promises.rename(`${staged}.tmp`, staged); });
-        runtimeVersionChecks.delete(executable);
-        if (!await isRuntimeBinaryValid(executable)) throw new Error(`${executable} failed its launch check after repair.`);
-      }
-      await fs.promises.rm(archivePath, { force: true });
-      await fs.promises.rm(extractDir, { recursive: true, force: true });
-    }
-    publishDependencyStatus('ready', 'Audio and Rooms tools are ready.', 100);
-    return true;
-  })().catch(error => {
-    publishDependencyStatus('error', error.message || 'Could not prepare required runtime tools.');
-    appendStreamDebug(`Runtime dependency repair failed: ${error.stack || error}`);
-    throw error;
-  }).finally(() => { runtimeDependenciesPromise = null; });
-  return runtimeDependenciesPromise;
-}
-
-function findFileRecursively(root, fileName) {
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    const candidate = path.join(root, entry.name);
-    if (entry.isFile() && entry.name.toLowerCase() === fileName.toLowerCase()) return candidate;
-    if (entry.isDirectory()) {
-      const nested = findFileRecursively(candidate, fileName);
-      if (nested) return nested;
-    }
-  }
-  return null;
-}
-
-async function refreshYtDlpAfterExtractionFailure(reason) {
-  if (Date.now() - lastYtDlpRepairAt < 6 * 60 * 60 * 1000) return false;
-  if (ytDlpRepairPromise) return ytDlpRepairPromise;
-  lastYtDlpRepairAt = Date.now();
-  ytDlpRepairPromise = (async () => {
-    const targetPath = path.join(runtimeBinDir, 'yt-dlp.exe');
-    publishDependencyStatus('downloading', 'Refreshing audio streaming support…', null);
-    try {
-      await downloadHttpsFile('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe', targetPath, percent => publishDependencyStatus('downloading', 'Refreshing audio streaming support…', percent));
-      runtimeVersionChecks.delete('yt-dlp.exe');
-      if (!await spawnVersionCheck(targetPath, ['--version'])) throw new Error('Updated yt-dlp failed its launch check.');
-      appendStreamDebug(`yt-dlp refreshed after stream extraction failure: ${String(reason || '').slice(0, 240)}`);
-      publishDependencyStatus('ready', 'Audio and Rooms tools are ready.', 100);
-      return true;
-    } catch (error) {
-      appendStreamDebug(`yt-dlp refresh failed: ${error.message}`);
-      publishDependencyStatus('error', `Audio streaming repair failed: ${error.message}`);
-      return false;
-    } finally {
-      ytDlpRepairPromise = null;
-    }
-  })();
-  return ytDlpRepairPromise;
-}
 
 function getBundledBinaryPath(name) {
   if (app.isPackaged) {
@@ -1261,25 +1050,67 @@ function getBundledBinaryPath(name) {
     path.join(__dirname, 'build_support', 'vc-runtime', name),
     path.join(__dirname, 'resources', 'bin', name)
   ];
-  if (name === 'ffmpeg.exe') {
-    try { devCandidates.push(require('ffmpeg-static')); } catch {}
+  return devCandidates.find(candidate => fs.existsSync(candidate)) || null;
+}
+
+function ensureUserBinaries() {
+  try {
+    const userBinDir = path.join(app.getPath('userData'), 'bin');
+    fs.mkdirSync(userBinDir, { recursive: true });
+    for (const name of ['yt-dlp.exe', ...YT_DLP_DLLS]) {
+      const bundledPath = getBundledBinaryPath(name);
+      if (!bundledPath) {
+        if (name === 'yt-dlp.exe') console.error('[yt-dlp] Bundled executable is missing from resources/bin.');
+        continue;
+      }
+      const targetPath = path.join(userBinDir, name);
+      const sourceSize = fs.statSync(bundledPath).size;
+      const targetSize = fs.existsSync(targetPath) ? fs.statSync(targetPath).size : 0;
+      if (!targetSize || targetSize < sourceSize) {
+        fs.copyFileSync(bundledPath, targetPath);
+        console.log(`[Media Tools] Installed bundled ${name} into userData/bin.`);
+      }
+    }
+    const ytDlpPath = path.join(userBinDir, 'yt-dlp.exe');
+    return fs.existsSync(ytDlpPath) && fs.statSync(ytDlpPath).size > 50000 ? ytDlpPath : null;
+  } catch (err) {
+    console.error('[Media Tools] Could not prepare writable userData/bin:', err.message);
+    return null;
   }
-  if (name === 'ffprobe.exe') {
-    try { devCandidates.push(require('ffprobe-static')?.path); } catch {}
-  }
-  return devCandidates.find(candidate => typeof candidate === 'string' && fs.existsSync(candidate)) || null;
 }
 
 function getYtDlpPath() {
-  return path.join(runtimeBinDir, 'yt-dlp.exe');
+  // The executable and its VC++ runtime DLLs share a writable folder. This
+  // avoids app.asar / Program Files execution and DLL search-path failures.
+  return ensureUserBinaries();
 }
 
 function getFfmpegPath() {
-  return path.join(runtimeBinDir, 'ffmpeg.exe');
+  if (app.isPackaged) {
+    const bundledPath = path.join(process.resourcesPath, 'bin', 'ffmpeg.exe');
+    return fs.existsSync(bundledPath) ? bundledPath : null;
+  }
+  try {
+    const devPath = require('ffmpeg-static');
+    return devPath && fs.existsSync(devPath) ? devPath : null;
+  } catch (err) {
+    console.warn('[Offline Download] Unable to locate development FFmpeg:', err.message);
+    return null;
+  }
 }
 
 function getFfprobePath() {
-  return path.join(runtimeBinDir, 'ffprobe.exe');
+  if (app.isPackaged) {
+    const bundledPath = path.join(process.resourcesPath, 'bin', 'ffprobe.exe');
+    return fs.existsSync(bundledPath) ? bundledPath : null;
+  }
+  try {
+    const devPath = require('ffprobe-static')?.path;
+    return devPath && fs.existsSync(devPath) ? devPath : null;
+  } catch (err) {
+    console.warn('[Offline Download] Unable to locate development ffprobe:', err.message);
+    return null;
+  }
 }
 
 const musicVideoTitlePattern = /\b(?:official\s+music\s+video|official\s+video|music\s+video|video\s+song|full\s+video|lyrical\s+video|teaser|trailer|jukebox|1\s*hour|mashup)\b/i;
@@ -1292,10 +1123,10 @@ function appendStreamDebug(message) {
   }
 }
 
-function runYtDlpOnce(args, timeoutMs = 30000) {
+function runYtDlpOnce(args, timeoutMs = 15000) {
   return new Promise((resolve) => {
-    void ensureRuntimeDependencies().then(() => {
     const ytDlpCmd = getYtDlpPath();
+    if (!ytDlpCmd) return resolve({ code: -1, stdout: '', stderr: 'Bundled yt-dlp.exe or its VC++ runtime is missing.' });
     let stdout = '';
     let stderr = '';
     let finished = false;
@@ -1315,11 +1146,10 @@ function runYtDlpOnce(args, timeoutMs = 30000) {
     child.stderr?.on('data', data => { stderr += data.toString(); });
     child.on('error', error => finish({ code: -1, stdout, stderr: `${stderr}\n${error.message}`, timedOut }));
     child.on('close', code => finish({ code: timedOut ? -1 : code, stdout, stderr: timedOut ? `${stderr}\nProcess timed out after ${timeoutMs}ms.` : stderr, timedOut }));
-    }).catch(error => resolve({ code: -1, stdout: '', stderr: error.message || 'Runtime dependency repair failed.' }));
   });
 }
 
-async function runYtDlp(args, timeoutMs = 30000) {
+async function runYtDlp(args, timeoutMs = 15000) {
   const first = await runYtDlpOnce(args, timeoutMs);
   if (first.code === 0) return first;
   appendStreamDebug(`yt-dlp attempt 1 failed (exit=${first.code}, timeout=${Boolean(first.timedOut)}).\nargs=${args.join(' ')}\nstderr=${first.stderr || '(empty)'}`);
@@ -1471,15 +1301,6 @@ async function findOfficialAudioVideo(metadata = {}) {
 async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
   if (!videoId) return null;
 
-  try {
-    await ensureRuntimeDependencies();
-  } catch (error) {
-    const reason = `Required audio tools are unavailable: ${error.message || 'runtime repair failed'}`;
-    streamFailureReasons.set(videoId, reason);
-    appendStreamDebug(`resolveStreamUrl dependency check failed for videoId=${videoId}: ${reason}`);
-    return null;
-  }
-
   if (!options.forceRefresh && streamCache.has(videoId)) {
     const cached = streamCache.get(videoId);
     if (Date.now() - cached.timestamp < 1000 * 60 * 60 * 5) {
@@ -1508,10 +1329,9 @@ async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
   const metadataDuration = Number(metadata.duration) || 0;
   let selectedVideoId = videoId;
   if (metadataDuration > 0 && !String(videoId).startsWith('saavn_')) {
-    const check = await runYtDlp(['--dump-single-json', '--skip-download', '--no-warnings', '--no-playlist', `https://www.youtube.com/watch?v=${videoId}`], 20000);
+    const check = await runYtDlp(['--dump-single-json', '--skip-download', '--no-warnings', '--no-playlist', `https://www.youtube.com/watch?v=${videoId}`]);
     try {
-      const details = parseYtDlpJson(check.stdout);
-      if (!details || typeof details !== 'object') throw new Error('yt-dlp returned no metadata object.');
+      const details = JSON.parse(check.stdout.trim().split(/\r?\n/).pop());
       const oversized = Number(details.duration) > metadataDuration + 8;
       const isVideoTitle = musicVideoTitlePattern.test(details.title || '');
       if (oversized || isVideoTitle) {
@@ -1533,7 +1353,7 @@ async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
     '--extractor-args', 'youtube:player_client=android,ios,web',
     '-j', sourceUrl
   ];
-  const result = await runYtDlp(args, 30000);
+  const result = await runYtDlp(args, 15000);
   const info = result.code === 0 ? parseYtDlpJson(result.stdout) : null;
   const selectedFormat = info?.requested_formats?.find(format => format?.url) || info?.requested_downloads?.find(format => format?.url) || info;
   const resolvedUrl = selectedFormat?.url || info?.url;
@@ -1552,19 +1372,6 @@ async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
 
   const ytDlpReason = result.stderr?.trim() || `yt-dlp exited with code ${result.code}.`;
   console.warn(`[Stream Proxy] yt-dlp audio extraction failed for ${videoId}:`, ytDlpReason.slice(0, 400));
-  const refreshedYtDlp = await refreshYtDlpAfterExtractionFailure(ytDlpReason);
-  if (refreshedYtDlp) {
-    const repairedResult = await runYtDlp(args, 30000);
-    const repairedInfo = repairedResult.code === 0 ? parseYtDlpJson(repairedResult.stdout) : null;
-    const repairedFormat = repairedInfo?.requested_formats?.find(format => format?.url) || repairedInfo?.requested_downloads?.find(format => format?.url) || repairedInfo;
-    const repairedUrl = repairedFormat?.url || repairedInfo?.url;
-    if (repairedUrl) {
-      const streamInfo = normalizeStreamResult({ url: repairedUrl, headers: { ...(repairedInfo?.http_headers || {}), ...(repairedFormat?.http_headers || {}) }, source: 'yt-dlp-repaired', timestamp: Date.now() });
-      streamCache.set(videoId, streamInfo);
-      streamFailureReasons.delete(videoId);
-      return streamInfo;
-    }
-  }
   const innerTubeInfo = await resolveInnerTubeAudio(selectedVideoId);
   if (innerTubeInfo) {
     const streamInfo = { ...innerTubeInfo, timestamp: Date.now() };
@@ -1583,7 +1390,179 @@ async function resolveStreamUrl(videoId, metadata = {}, options = {}) {
 // Official YouTube Music InnerTube Search Engine (Lightning Fast & 100% Pure Music)
 function searchYouTubeMusic(query) {
   const explicitVideoSearch = /\bvideo\b/i.test(String(query || ''));
+  const songsParam = 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D'; // Pure Songs Filter Parameter
+  const initialParams = explicitVideoSearch ? undefined : songsParam;
+
   return new Promise((resolve) => {
+    function executeSearch(searchParams) {
+      const payloadObj = {
+        context: {
+          client: {
+            clientName: 'WEB_REMIX',
+            clientVersion: '1.20240101.01.00',
+            hl: 'en',
+            gl: 'US'
+          }
+        },
+        query: query
+      };
+      if (searchParams) {
+        payloadObj.params = searchParams;
+      }
+      const postData = JSON.stringify(payloadObj);
+
+      const req = https.request('https://music.youtube.com/youtubei/v1/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Origin': 'https://music.youtube.com',
+          'Referer': 'https://music.youtube.com/'
+        }
+      }, (res) => {
+        let body = '';
+        res.on('data', (d) => { body += d; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(body);
+            const sections = json.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+            const tracks = [];
+            const seenIds = new Set();
+
+            // 1. Check Top Result card if present
+            for (const sec of sections) {
+              if (sec.musicCardShelfRenderer) {
+                const card = sec.musicCardShelfRenderer;
+                const title = card.title?.runs?.[0]?.text;
+                const videoId = card.onTap?.watchEndpoint?.videoId 
+                  || card.buttons?.[0]?.buttonRenderer?.command?.watchEndpoint?.videoId;
+                const subtitle = card.subtitle?.runs?.map(r => r.text).join('') || '';
+                const thumb = card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url;
+
+                if (title && videoId && !seenIds.has(videoId)) {
+                  seenIds.add(videoId);
+                  const isSong = subtitle.toLowerCase().includes('song');
+                  const durStr = extractDurationString(subtitle);
+                  const durSec = extractDurationFromStr(durStr);
+                  tracks.push({
+                    id: videoId,
+                    title: title,
+                    artist: cleanArtistSubtitle(subtitle),
+                    duration: durSec,
+                    durationSec: durSec,
+                    durationString: durStr,
+                    thumbnail: thumb || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+                    isSong: isSong,
+                    isVideo: subtitle.toLowerCase().includes('video'),
+                    musicVideoType: String(card.musicVideoType || card.onTap?.watchEndpoint?.musicVideoType || ''),
+                    isTopResult: true
+                  });
+                }
+              }
+            }
+
+            // 2. Parse all music shelves and item sections
+            for (const sec of sections) {
+              let items = [];
+              if (sec.itemSectionRenderer?.contents) {
+                items = sec.itemSectionRenderer.contents;
+              } else if (sec.musicShelfRenderer?.contents) {
+                items = sec.musicShelfRenderer.contents;
+              }
+
+              for (const wrapper of items) {
+                const item = wrapper.musicResponsiveListItemRenderer;
+                if (!item) continue;
+
+                const title = item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
+                const subtitleRuns = item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+                const subtitle = subtitleRuns.map(r => r.text).join('');
+
+                // Strict Music Filtering: Ignore podcast episodes, non-music long lectures
+                const lowerSub = subtitle.toLowerCase();
+                if (lowerSub.includes('episode') || lowerSub.includes('podcast')) continue;
+
+                const watchEndpoint = item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint
+                  || item.doubleTapEndpoint?.watchEndpoint
+                  || item.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint;
+                
+                const videoId = watchEndpoint?.videoId || item.playlistItemData?.videoId;
+                const thumb = item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url;
+
+                if (title && videoId && !seenIds.has(videoId)) {
+                  seenIds.add(videoId);
+                  const isSong = lowerSub.includes('song') || lowerSub.includes('track');
+                  const isVideo = lowerSub.includes('video');
+                  const musicVideoType = String(item.musicVideoType || watchEndpoint?.musicVideoType || '');
+                  const durStr = extractDurationString(subtitle);
+                  const durSec = extractDurationFromStr(durStr);
+
+                  tracks.push({
+                    id: videoId,
+                    title: title,
+                    artist: cleanArtistSubtitle(subtitle),
+                    duration: durSec,
+                    durationSec: durSec,
+                    durationString: durStr,
+                    thumbnail: thumb || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+                    isSong: isSong,
+                    isVideo: isVideo,
+                    musicVideoType
+                  });
+                }
+              }
+            }
+
+            // If strict filter yielded 0 tracks, retry without filter param
+            if (tracks.length === 0 && searchParams) {
+              return executeSearch(null);
+            }
+
+            // Prefer native audio tracks; if an ATV exists for a song, drop its OMV/UGC variants.
+            const normalizeTitle = value => String(value || '').toLowerCase().replace(/\([^)]*\)/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+            const primaryArtist = value => normalizeStreamArtist(value);
+            const audioKeys = new Set(tracks.filter(track => track.musicVideoType === 'MUSIC_VIDEO_TYPE_ATV')
+              .map(track => `${normalizeTitle(track.title)}|${primaryArtist(track.artist)}`));
+            const filteredTracks = tracks.filter(track => {
+              if (!explicitVideoSearch && musicVideoTitlePattern.test(track.title || '')) return false;
+              const key = `${normalizeTitle(track.title)}|${primaryArtist(track.artist)}`;
+              return !(audioKeys.has(key) && ['MUSIC_VIDEO_TYPE_OMV', 'MUSIC_VIDEO_TYPE_UGC'].includes(track.musicVideoType));
+            });
+            filteredTracks.sort((a, b) => {
+              const aAudio = a.musicVideoType === 'MUSIC_VIDEO_TYPE_ATV' || a.isSong ? 1 : 0;
+              const bAudio = b.musicVideoType === 'MUSIC_VIDEO_TYPE_ATV' || b.isSong ? 1 : 0;
+              return bAudio - aAudio || Number(Boolean(b.isTopResult)) - Number(Boolean(a.isTopResult));
+            });
+
+            resolve(filteredTracks);
+          } catch (e) {
+            console.error('InnerTube parse error:', e);
+            if (searchParams) return executeSearch(null);
+            resolve([]);
+          }
+        });
+      });
+
+      req.on('error', (err) => {
+        console.error('InnerTube request error:', err);
+        if (searchParams) return executeSearch(null);
+        resolve([]);
+      });
+
+      req.write(postData);
+      req.end();
+    }
+
+    executeSearch(initialParams);
+  });
+}
+
+// Official YouTube Music InnerTube Live Search Suggestions Engine
+function getYouTubeMusicSuggestions(query) {
+  return new Promise((resolve) => {
+    const cleanQuery = String(query || '').trim();
+    if (cleanQuery.length < 2) return resolve([]);
+
     const postData = JSON.stringify({
       context: {
         client: {
@@ -1593,10 +1572,10 @@ function searchYouTubeMusic(query) {
           gl: 'US'
         }
       },
-      query: query
+      input: cleanQuery
     });
 
-    const req = https.request('https://music.youtube.com/youtubei/v1/search', {
+    const req = https.request('https://music.youtube.com/youtubei/v1/music/get_search_suggestions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1606,127 +1585,33 @@ function searchYouTubeMusic(query) {
       }
     }, (res) => {
       let body = '';
-      res.on('data', (d) => { body += d; });
+      res.on('data', d => body += d);
       res.on('end', () => {
         try {
           const json = JSON.parse(body);
-          const sections = json.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
-          const tracks = [];
-          const seenIds = new Set();
-
-          // 1. Check Top Result card if present
-          for (const sec of sections) {
-            if (sec.musicCardShelfRenderer) {
-              const card = sec.musicCardShelfRenderer;
-              const title = card.title?.runs?.[0]?.text;
-              const videoId = card.onTap?.watchEndpoint?.videoId 
-                || card.buttons?.[0]?.buttonRenderer?.command?.watchEndpoint?.videoId;
-              const subtitle = card.subtitle?.runs?.map(r => r.text).join('') || '';
-              const thumb = card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url;
-
-              if (title && videoId && !seenIds.has(videoId)) {
-                seenIds.add(videoId);
-                const isSong = subtitle.toLowerCase().includes('song');
-                const durStr = extractDurationString(subtitle);
-                const durSec = extractDurationFromStr(durStr);
-                tracks.push({
-                  id: videoId,
-                  title: title,
-                  artist: cleanArtistSubtitle(subtitle),
-                  duration: durSec,
-                  durationSec: durSec,
-                  durationString: durStr,
-                  thumbnail: thumb || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-                  isSong: isSong,
-                  isVideo: subtitle.toLowerCase().includes('video'),
-                  musicVideoType: String(card.musicVideoType || card.onTap?.watchEndpoint?.musicVideoType || ''),
-                  isTopResult: true
-                });
+          const contents = json.contents || [];
+          const list = [];
+          for (const secElem of contents) {
+            const renderer = secElem.searchSuggestionsSectionRenderer;
+            if (!renderer || !Array.isArray(renderer.contents)) continue;
+            for (const itemElem of renderer.contents) {
+              const sRenderer = itemElem.searchSuggestionRenderer || itemElem.historySuggestionRenderer;
+              if (!sRenderer) continue;
+              const runs = sRenderer.suggestion?.runs || [];
+              const text = runs.map(r => r.text || '').join('').trim();
+              if (text && !list.includes(text)) {
+                list.add ? list.add(text) : list.push(text);
               }
             }
           }
-
-          // 2. Parse all music shelves and item sections
-          for (const sec of sections) {
-            let items = [];
-            if (sec.itemSectionRenderer?.contents) {
-              items = sec.itemSectionRenderer.contents;
-            } else if (sec.musicShelfRenderer?.contents) {
-              items = sec.musicShelfRenderer.contents;
-            }
-
-            for (const wrapper of items) {
-              const item = wrapper.musicResponsiveListItemRenderer;
-              if (!item) continue;
-
-              const title = item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
-              const subtitleRuns = item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
-              const subtitle = subtitleRuns.map(r => r.text).join('');
-
-              // Strict Music Filtering: Ignore podcast episodes, non-music long lectures
-              const lowerSub = subtitle.toLowerCase();
-              if (lowerSub.includes('episode') || lowerSub.includes('podcast')) continue;
-
-              const watchEndpoint = item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint
-                || item.doubleTapEndpoint?.watchEndpoint
-                || item.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint;
-              
-              const videoId = watchEndpoint?.videoId || item.playlistItemData?.videoId;
-              const thumb = item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url;
-
-              if (title && videoId && !seenIds.has(videoId)) {
-                seenIds.add(videoId);
-                const isSong = lowerSub.includes('song') || lowerSub.includes('track');
-                const isVideo = lowerSub.includes('video');
-                const musicVideoType = String(item.musicVideoType || watchEndpoint?.musicVideoType || '');
-                const durStr = extractDurationString(subtitle);
-                const durSec = extractDurationFromStr(durStr);
-
-                tracks.push({
-                  id: videoId,
-                  title: title,
-                  artist: cleanArtistSubtitle(subtitle),
-                  duration: durSec,
-                  durationSec: durSec,
-                  durationString: durStr,
-                  thumbnail: thumb || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-                  isSong: isSong,
-                  isVideo: isVideo,
-                  musicVideoType
-                });
-              }
-            }
-          }
-
-          // Prefer native audio tracks; if an ATV exists for a song, drop its OMV/UGC variants.
-          const normalizeTitle = value => String(value || '').toLowerCase().replace(/\([^)]*\)/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-          const primaryArtist = value => normalizeStreamArtist(value);
-          const audioKeys = new Set(tracks.filter(track => track.musicVideoType === 'MUSIC_VIDEO_TYPE_ATV')
-            .map(track => `${normalizeTitle(track.title)}|${primaryArtist(track.artist)}`));
-          const filteredTracks = tracks.filter(track => {
-            if (!explicitVideoSearch && musicVideoTitlePattern.test(track.title || '')) return false;
-            const key = `${normalizeTitle(track.title)}|${primaryArtist(track.artist)}`;
-            return !(audioKeys.has(key) && ['MUSIC_VIDEO_TYPE_OMV', 'MUSIC_VIDEO_TYPE_UGC'].includes(track.musicVideoType));
-          });
-          filteredTracks.sort((a, b) => {
-            const aAudio = a.musicVideoType === 'MUSIC_VIDEO_TYPE_ATV' || a.isSong ? 1 : 0;
-            const bAudio = b.musicVideoType === 'MUSIC_VIDEO_TYPE_ATV' || b.isSong ? 1 : 0;
-            return bAudio - aAudio || Number(Boolean(b.isTopResult)) - Number(Boolean(a.isTopResult));
-          });
-
-          resolve(filteredTracks);
+          resolve(list.slice(0, 10));
         } catch (e) {
-          console.error('InnerTube parse error:', e);
           resolve([]);
         }
       });
     });
 
-    req.on('error', (err) => {
-      console.error('InnerTube request error:', err);
-      resolve([]);
-    });
-
+    req.on('error', () => resolve([]));
     req.write(postData);
     req.end();
   });
@@ -1804,11 +1689,6 @@ function createWindow() {
   } else {
     mainWindow.loadFile('index.html');
   }
-  mainWindow.webContents.once('did-finish-load', () => {
-    if (runtimeDependencyStatus && runtimeDependencyStatus.state !== 'ready') {
-      mainWindow?.webContents.send('dependency-status', runtimeDependencyStatus);
-    }
-  });
 
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window-state', 'maximized'));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window-state', 'unmaximized'));
@@ -1825,7 +1705,7 @@ app.whenReady().then(() => {
   } catch (e) {
     console.warn('[Firebase Auth] Could not register the EchoPlayer sign-in return link:', e.message);
   }
-  void ensureRuntimeDependencies().catch(error => console.warn('[Runtime] Dependency preparation will retry before use:', error.message));
+  ensureUserBinaries();
   startAudioProxy();
   createWindow();
   const startupAuthUrl = process.argv.find(arg => /^echoplayer:\/\/auth(?:[/?#]|$)/i.test(arg));
@@ -1893,6 +1773,15 @@ ipcMain.handle('search-music', async (event, query) => {
     console.warn('Search failed:', err);
   }
   return [];
+});
+
+// Live Search Suggestions: Real YouTube Music InnerTube Suggestions
+ipcMain.handle('get-search-suggestions', async (event, query) => {
+  try {
+    return await getYouTubeMusicSuggestions(query);
+  } catch (err) {
+    return [];
+  }
 });
 
 // Official YouTube Music Radio & Up Next Queue Engine
@@ -2018,10 +1907,11 @@ function normalizeLyricsMatchText(value) {
 
 function cleanLyricsTitle(value) {
   return String(value || '')
-    .replace(/\s*[\[(]\s*(?:(?:feat(?:uring)?|ft)\.?|with|official(?:\s+(?:music\s+)?(?:audio|video|lyrics?))?)[^\])]*[\])]/giu, ' ')
+    .replace(/\|.*$/u, ' ')
+    .replace(/\s*[\[(]\s*(?:(?:feat(?:uring)?|ft)\.?|with|official(?:\s+(?:music\s+)?(?:audio|video|lyrics?))?|lyrics?|audio|video|visualizer)[^\])]*[\])]/giu, ' ')
     .replace(/\s*-\s*(?:remaster(?:ed)?(?:\s+\d{4})?|lyric\s+video)\b.*$/iu, ' ')
     .replace(/\b(?:feat(?:uring)?|ft)\.?\s+.*$/iu, ' ')
-    .replace(/\b(?:official\s+(?:music\s+)?(?:audio|video|lyrics?)|lyric\s+video)\b/giu, ' ')
+    .replace(/\b(?:official\s+(?:music\s+)?(?:audio|video|lyrics?)|lyric\s+video|lyrics?)\b/giu, ' ')
     .replace(/\s+/gu, ' ')
     .replace(/[\s.,!?;:]+$/u, '')
     .trim();
@@ -2033,7 +1923,7 @@ function getPrimaryLyricsArtist(value) {
     .replace(/\s*-\s*Topic$/iu, '')
     .replace(/\s*VEVO$/iu, '')
     .trim();
-  return artist.split(/\s*(?:&|,|\/|;|\bfeat(?:uring)?\.?\b|\bft\.?\b|\bwith\b|\s+x\s+)\s*/iu)[0].trim();
+  return artist.split(/&|,|feat\.|ft\.| x /i)[0].trim();
 }
 
 function lyricsArtistMatches(expectedArtist, candidateArtist) {
@@ -2095,7 +1985,6 @@ async function extractYouTubeTimedLyrics(videoId) {
   if (!videoId || typeof videoId !== 'string' || videoId.startsWith('saavn_') || videoId.startsWith('Dracula-')) {
     return null;
   }
-  try { await ensureRuntimeDependencies(); } catch (error) { appendStreamDebug(`Timed lyrics skipped because runtime tools are unavailable: ${error.message}`); return null; }
   const ytDlpCmd = getYtDlpPath();
   if (!ytDlpCmd) return null;
 
@@ -2331,54 +2220,72 @@ ipcMain.handle('get-lyrics', async (event, { title, artist, duration, videoId, t
     if (!cleanTitle || !primaryArtist) return { synced: false, lyrics: null };
 
     const records = [];
-    // Tier 1: exact metadata lookup, without duration filtering.
+    // Step A / Tier 1: Exact metadata + duration lookup (matches within ±2s on LRCLIB)
     const exactUrl = new URL('https://lrclib.net/api/get');
     exactUrl.searchParams.set('track_name', cleanTitle);
     exactUrl.searchParams.set('artist_name', primaryArtist);
+    if (targetDuration > 0) {
+      exactUrl.searchParams.set('duration', String(Math.round(targetDuration)));
+    }
     try {
       const record = await fetchLyricsJson(exactUrl);
-      if (lyricsRecordMatches(record, cleanTitle, primaryArtist)) {
+      if (record && (record.syncedLyrics || record.plainLyrics) && lyricsRecordMatches(record, cleanTitle, primaryArtist)) {
         const exactResult = makeLyricsResponse(record, targetDuration, 'LRCLIB', Boolean(hasManualLyricOffset));
         if (exactResult?.synced) return exactResult;
         if (exactResult) records.push(record);
       }
     } catch (error) {
-      console.warn('[Lyrics] LRCLIB exact lookup failed:', error.message);
+      console.warn('[Lyrics] LRCLIB Tier 1 exact lookup failed:', error.message);
     }
 
-    // Tier 2: run both LRCLIB search forms; duration is only a ranking signal,
-    // never a reason to discard a valid lyric record.
-    const searchUrls = [];
-    const byFields = new URL('https://lrclib.net/api/search');
-    byFields.searchParams.set('track_name', cleanTitle);
-    byFields.searchParams.set('artist_name', primaryArtist);
-    searchUrls.push(byFields);
-    const byQuery = new URL('https://lrclib.net/api/search');
-    byQuery.searchParams.set('q', `${cleanTitle} ${primaryArtist}`.trim());
-    searchUrls.push(byQuery);
+    // Step B / Tier 2 (if Tier 1 was 404): Search LRCLIB candidates by track_name & artist_name
+    try {
+      const tier2Url = new URL('https://lrclib.net/api/search');
+      tier2Url.searchParams.set('track_name', cleanTitle);
+      tier2Url.searchParams.set('artist_name', primaryArtist);
+      const tier2Results = await fetchLyricsJson(tier2Url);
+      if (Array.isArray(tier2Results)) records.push(...tier2Results);
+    } catch (error) {
+      console.warn('[Lyrics] LRCLIB Tier 2 search failed:', error.message);
+    }
 
-    for (const searchUrl of searchUrls) {
+    // Tier 3 (if empty): Broader search with q=cleanTitle + ' ' + primaryArtist
+    if (records.length === 0) {
       try {
-        const results = await fetchLyricsJson(searchUrl);
-        if (Array.isArray(results)) records.push(...results);
+        const tier3Url = new URL('https://lrclib.net/api/search');
+        tier3Url.searchParams.set('q', `${cleanTitle} ${primaryArtist}`.trim());
+        const tier3Results = await fetchLyricsJson(tier3Url);
+        if (Array.isArray(tier3Results)) records.push(...tier3Results);
       } catch (error) {
-        console.warn('[Lyrics] LRCLIB search failed:', error.message);
+        console.warn('[Lyrics] LRCLIB Tier 3 search failed:', error.message);
       }
     }
+
     const uniqueRecords = [...new Map(records.map(record => [
       `${normalizeLyricsMatchText(record.trackName)}|${normalizeLyricsMatchText(record.artistName)}|${Number(record.duration) || 0}`,
       record
     ])).values()];
+
+    const scoreCandidate = (cand) => {
+      let score = lyricsTitleSimilarity(cleanTitle, cand.trackName) * 100;
+      if (cand.syncedLyrics && cand.syncedLyrics.trim().length > 0) {
+        score += 1000;
+      } else if (cand.plainLyrics && cand.plainLyrics.trim().length > 0) {
+        score += 200;
+      }
+      if (targetDuration > 0 && Number(cand.duration) > 0) {
+        // Linear duration delta penalty: -Math.abs(cand.duration - trackDurationSec) * 10
+        // NEVER hard-reject the only available match just because duration differs by > 4s
+        const delta = Math.abs(Number(cand.duration) - targetDuration);
+        score -= delta * 10;
+      }
+      return score;
+    };
+
     const candidates = uniqueRecords
       .filter(record => lyricsRecordMatches(record, cleanTitle, primaryArtist))
-      .sort((a, b) => {
-        const syncedPriority = Number(Boolean(b.syncedLyrics)) - Number(Boolean(a.syncedLyrics));
-        if (syncedPriority) return syncedPriority;
-        const aDelta = targetDuration > 0 ? Math.abs((Number(a.duration) || 0) - targetDuration) : 0;
-        const bDelta = targetDuration > 0 ? Math.abs((Number(b.duration) || 0) - targetDuration) : 0;
-        if (aDelta !== bDelta) return aDelta - bDelta;
-        return lyricsTitleSimilarity(cleanTitle, b.trackName) - lyricsTitleSimilarity(cleanTitle, a.trackName);
-      });
+      .sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+
     const selected = candidates[0];
     const lrclibResult = makeLyricsResponse(selected, targetDuration, 'LRCLIB', Boolean(hasManualLyricOffset));
     if (lrclibResult) return lrclibResult;
@@ -2474,8 +2381,6 @@ ipcMain.handle('clear-cache', () => {
 
 // Download track offline to Music/EchoMusic
 ipcMain.handle('download-track', async (event, { id, title, artist }) => {
-  try { await ensureRuntimeDependencies(); }
-  catch (error) { return { success: false, error: `Audio tools could not be repaired: ${error.message}` }; }
   const safeId = String(id || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
   const musicDir = path.join(app.getPath('music'), 'EchoMusic');
   if (!safeId) {
@@ -2551,7 +2456,6 @@ async function writeProfileInitializationState(state) {
 }
 
 ipcMain.handle('initialize-fresh-profile', async (event, profileSignals = {}) => {
-  try {
   let initializationState = null;
   try {
     initializationState = JSON.parse(await fs.promises.readFile(profileInitializationPath, 'utf8'));
@@ -2567,31 +2471,17 @@ ipcMain.handle('initialize-fresh-profile', async (event, profileSignals = {}) =>
   }
 
   const existingAccountSession = fs.existsSync(firebaseSessionFile());
-  const savedProfileHasRealUse = Boolean(savedProfile && (
-    (Array.isArray(savedProfile.history) && savedProfile.history.length)
-    || (Array.isArray(savedProfile.favorites) && savedProfile.favorites.length)
-    || (Array.isArray(savedProfile.favoriteTracks) && savedProfile.favoriteTracks.length)
-    || (Array.isArray(savedProfile.importedListeningMemory) && savedProfile.importedListeningMemory.length)
-    || (savedProfile.tastePreferences && Object.keys(savedProfile.tastePreferences).length)
-    || (String(savedProfile.profileName || '').trim() && savedProfile.profileName !== 'Local listener')
-  ));
-  const signalHasRealUse = profileSignals?.hasExistingProfile === true;
-  // Older builds could save a default Starboy selection and mark onboarding
-  // complete before first-run initialization. That empty state is not a user.
-  const staleFreshProfile = initializationState?.freshInstall === true
-    && initializationState?.onboardingResolvedByUser !== true
-    && !savedProfileHasRealUse && !signalHasRealUse && !existingAccountSession;
-  const hasPriorProfile = Boolean((initializationState?.hasInitializedFreshProfile && !staleFreshProfile)
-    || savedProfileHasRealUse || signalHasRealUse || existingAccountSession);
+  const hasPriorProfile = Boolean(initializationState?.hasInitializedFreshProfile
+    || savedProfile
+    || profileSignals?.hasExistingProfile
+    || existingAccountSession);
   const isFirstLaunch = !initializationState?.hasInitializedFreshProfile && !hasPriorProfile;
-  const shouldRunWelcome = isFirstLaunch || staleFreshProfile;
 
-  if (shouldRunWelcome) {
+  if (isFirstLaunch) {
     // A genuinely new local profile must never inherit an account session from
     // copied app data or a stale Electron origin store.
     await clearFirebaseSession().catch(() => {});
     await clearPendingFirebaseLogin().catch(() => {});
-    try { await fs.promises.unlink(storageFilePath); } catch (error) { if (error.code !== 'ENOENT') console.warn('[Profile] Could not clear stale default profile:', error.message); }
     try {
       await event.sender.session.clearStorageData({
         storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers']
@@ -2601,26 +2491,23 @@ ipcMain.handle('initialize-fresh-profile', async (event, profileSignals = {}) =>
     }
   }
 
-  const isFreshInstall = shouldRunWelcome ? true : (initializationState?.freshInstall ?? isFirstLaunch);
-  const onboardingComplete = !shouldRunWelcome && (profileSignals?.onboardingComplete === true
+  const isFreshInstall = initializationState?.freshInstall ?? isFirstLaunch;
+  const onboardingComplete = profileSignals?.onboardingComplete === true
     || savedProfile?.onboardingDone === true
-    || initializationState?.onboardingComplete === true);
+    || initializationState?.onboardingComplete === true;
   const nextState = {
     ...(initializationState || {}),
     hasInitializedFreshProfile: true,
     freshInstall: isFreshInstall,
     onboardingComplete,
-    welcomeWizardPending: shouldRunWelcome || initializationState?.welcomeWizardPending === true
+    welcomeWizardPending: initializationState?.welcomeWizardPending === true
   };
   await writeProfileInitializationState(nextState);
 
   return {
     isFirstLaunch,
-    showWelcomeWizard: shouldRunWelcome || nextState.welcomeWizardPending || (isFreshInstall && !onboardingComplete)
+    showWelcomeWizard: isFirstLaunch || nextState.welcomeWizardPending || (isFreshInstall && !onboardingComplete)
   };
-  } finally {
-    releaseProfileInitialization?.();
-  }
 });
 
 ipcMain.handle('mark-onboarding-complete', async (_event, completed) => {
@@ -2631,14 +2518,12 @@ ipcMain.handle('mark-onboarding-complete', async (_event, completed) => {
     hasInitializedFreshProfile: true,
     freshInstall: Boolean(state.freshInstall),
     onboardingComplete: Boolean(completed),
-    onboardingResolvedByUser: Boolean(completed),
     welcomeWizardPending: !completed
   });
   return true;
 });
 
 ipcMain.handle('load-user-data', async () => {
-  await profileInitializationGate;
   try {
     if (fs.existsSync(storageFilePath)) {
       const raw = fs.readFileSync(storageFilePath, 'utf8');
@@ -2656,7 +2541,6 @@ let saveUserDataQueue = Promise.resolve();
 ipcMain.handle('save-user-data', async (event, data) => {
   saveUserDataQueue = saveUserDataQueue.then(async () => {
     try {
-      await profileInitializationGate;
       if (!fs.existsSync(userDataPath)) {
         await fs.promises.mkdir(userDataPath, { recursive: true });
       }
@@ -2712,12 +2596,42 @@ function watchLocalTunnel(tunnel) {
 }
 
 function getCloudflaredPath() {
-  return path.join(runtimeBinDir, 'cloudflared.exe');
+  const userDataDir = app.getPath('userData');
+  const extractedExe = path.join(userDataDir, 'cloudflared.exe');
+
+  // 1. If already valid on disk in userData, use it
+  if (fs.existsSync(extractedExe)) {
+    try {
+      if (fs.statSync(extractedExe).size > 10000000) {
+        return extractedExe;
+      }
+    } catch (e) {}
+  }
+
+  // Always prepare the mutable tunnel binary under userData before spawning.
+  const candidates = [
+    path.join(process.resourcesPath || '', 'bin', 'cloudflared.exe'),
+    path.join(__dirname, 'cloudflared.exe'),
+    path.join(process.resourcesPath || '', 'cloudflared.exe'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'cloudflared.exe')
+  ];
+
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      try {
+        fs.copyFileSync(c, extractedExe);
+        console.log('[Tunnel] Successfully extracted cloudflared to real disk:', extractedExe);
+        return extractedExe;
+      } catch (err) {
+        console.warn('[Tunnel] Copy error for candidate:', c, err);
+      }
+    }
+  }
+
+  return null;
 }
 
 async function startGlobalTunnel() {
-  try { await ensureRuntimeDependencies(); }
-  catch (error) { console.error('[Tunnel] Required runtime tools are unavailable:', error.message); return null; }
   if (globalTunnelUrl) return globalTunnelUrl;
   if (tunnelStarting) {
     while (tunnelStarting) {
@@ -2890,6 +2804,7 @@ ipcMain.handle('set-room-network-mode', async (event, mode) => {
 ipcMain.handle('regenerate-room-id', async () => {
   currentRoomId = generate6DigitCode();
   clearRoomSyncTickIfIdle();
+  syncRoomMetaToFirebaseRtdb(currentRoomId);
   const addressInfo = getRoomAddressInfo();
   const { localIp, joinUrl } = addressInfo;
   let qrDataUrl = '';
@@ -2927,6 +2842,7 @@ ipcMain.handle('set-room-id', async (event, customCode) => {
   }
   currentRoomId = cleaned;
   clearRoomSyncTickIfIdle();
+  syncRoomMetaToFirebaseRtdb(currentRoomId);
   const addressInfo = getRoomAddressInfo();
   const { localIp, joinUrl } = addressInfo;
   let qrDataUrl = '';
@@ -2994,10 +2910,10 @@ ipcMain.handle('firebase-auth-get-user', async () => {
   if (!session) return null;
   try {
     const result = await refreshFirebaseSession(session);
-    return result?.profile ? { ...result.profile, offline: Boolean(result.offline) } : null;
+    return result?.profile ? { ...result.profile, idToken: result.idToken || session.idToken, offline: Boolean(result.offline) } : null;
   } catch (error) {
     console.warn('[Firebase Auth] Session refresh unavailable:', error.message);
-    return session.profile ? { ...session.profile, offline: true } : null;
+    return session.profile ? { ...session.profile, idToken: session.idToken, offline: true } : null;
   }
 });
 
@@ -3061,6 +2977,7 @@ ipcMain.handle('broadcast-room-state', (event, data) => {
     sequenceId: outgoingState.sequenceId
   };
   broadcastToRoom(outgoingState);
+  syncRoomStateToFirebaseRtdb(currentRoomId, outgoingState, Boolean(data.force || data.type === 'track_change'));
   return true;
 });
 
@@ -3073,4 +2990,157 @@ ipcMain.handle('send-room-sync-pulse', () => {
   const targetServerTime = Date.now() + 300;
   broadcastToRoom({ type: 'pulse', targetServerTime });
   return targetServerTime;
+});
+
+ipcMain.handle('import-playlist-metadata', async (event, url) => {
+  const rawUrl = String(url || '').trim();
+  if (!rawUrl) return { success: false, message: 'Please enter a valid playlist URL' };
+
+  // 1. Spotify Playlist
+  const spotifyMatch = rawUrl.match(/playlist\/([a-zA-Z0-9]+)/i);
+  if (spotifyMatch) {
+    const playlistId = spotifyMatch[1];
+    return new Promise((resolve) => {
+      const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
+      https.get(embedUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            const nextIdx = body.indexOf('id="__NEXT_DATA__"');
+            if (nextIdx === -1) {
+              return resolve({ success: false, message: 'Could not extract playlist data from Spotify embed page.' });
+            }
+            const start = body.indexOf('>', nextIdx) + 1;
+            const end = body.indexOf('</script>', start);
+            const json = JSON.parse(body.slice(start, end));
+            const entity = json?.props?.pageProps?.state?.data?.entity;
+            const title = entity?.name || entity?.title || 'Spotify Playlist';
+            const rawTracks = Array.isArray(entity?.trackList) ? entity.trackList : [];
+            const tracks = rawTracks.map(t => ({
+              title: String(t.title || '').trim(),
+              artist: String(t.subtitle || '').trim(),
+              durationSec: Math.round((Number(t.duration) || 210000) / 1000)
+            })).filter(t => t.title);
+
+            if (!tracks.length) {
+              return resolve({ success: false, message: 'No tracks found in Spotify playlist.' });
+            }
+            resolve({ success: true, title, source: 'spotify', tracks });
+          } catch (e) {
+            resolve({ success: false, message: `Spotify parse error: ${e.message}` });
+          }
+        });
+      }).on('error', err => {
+        resolve({ success: false, message: `Network error reaching Spotify: ${err.message}` });
+      });
+    });
+  }
+
+  // 2. YouTube / YouTube Music Playlist
+  const ytMatch = rawUrl.match(/[?&]list=([a-zA-Z0-9_-]+)/i);
+  if (ytMatch) {
+    const listId = ytMatch[1];
+    const browseId = listId.startsWith('VL') ? listId : 'VL' + listId;
+    return new Promise((resolve) => {
+      const postData = JSON.stringify({
+        context: {
+          client: {
+            clientName: 'WEB_REMIX',
+            clientVersion: '1.20240101.01.00',
+            hl: 'en',
+            gl: 'US'
+          }
+        },
+        browseId
+      });
+
+      const req = https.request('https://music.youtube.com/youtubei/v1/browse', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            const title = data.microformat?.microformatDataRenderer?.title || 'YouTube Music Playlist';
+
+            const extractRenderers = (obj) => {
+              if (!obj || typeof obj !== 'object') return [];
+              const list = [];
+              if (obj.musicResponsiveListItemRenderer) list.push(obj.musicResponsiveListItemRenderer);
+              for (const k of Object.keys(obj)) list.push(...extractRenderers(obj[k]));
+              return list;
+            };
+
+            const renderers = extractRenderers(data.contents);
+            const tracks = [];
+            for (const item of renderers) {
+              const cols = item.flexColumns || [];
+              const trackTitle = cols[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
+              const artistRuns = cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+              const artist = artistRuns.map(r => r.text).filter(t => t && t !== ' • ' && t !== ' & ').join(', ');
+              const videoId = item.playlistItemData?.videoId || item.navigationEndpoint?.watchEndpoint?.videoId;
+              const thumb = item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)?.[0]?.url;
+
+              if (trackTitle) {
+                tracks.push({
+                  id: videoId || undefined,
+                  title: trackTitle.trim(),
+                  artist: artist ? artist.trim() : 'Unknown Artist',
+                  thumbnail: thumb || undefined,
+                  artwork: thumb || undefined,
+                  source: 'innertube'
+                });
+              }
+            }
+
+            if (!tracks.length) {
+              return resolve({ success: false, message: 'No tracks found in YouTube playlist or playlist is private.' });
+            }
+            resolve({ success: true, title, source: 'youtube', tracks });
+          } catch (e) {
+            resolve({ success: false, message: `YouTube Music parse error: ${e.message}` });
+          }
+        });
+      });
+
+      req.on('error', (err) => {
+        resolve({ success: false, message: `Network error reaching YouTube Music: ${err.message}` });
+      });
+
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  return { success: false, message: 'Unrecognized URL. Please provide a Spotify or YouTube Music playlist link.' };
+});
+
+ipcMain.handle('export-lyric-card', async (event, { dataUrl, fileName }) => {
+  try {
+    const base64Data = String(dataUrl || '').replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    const safeName = (fileName || 'MeloPair_Lyric_Card.png').replace(/[^\w\s.-]/gi, '_');
+
+    const defaultPath = path.join(app.getPath('pictures') || app.getPath('downloads'), safeName);
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export 9:16 Kinetic Lyric Card',
+      defaultPath,
+      filters: [{ name: 'PNG Image', extensions: ['png'] }]
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    await fs.promises.writeFile(result.filePath, buffer);
+    return { success: true, filePath: result.filePath };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
 });

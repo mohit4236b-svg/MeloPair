@@ -260,6 +260,26 @@ class MockIPC {
       this.recordCall('firebase-auth-signout', null);
       return true;
     });
+
+    ipcMain.handle('check-for-updates', async (_event, manual) => {
+      this.recordCall('check-for-updates', manual);
+      if (this.overrides.has('check-for-updates')) {
+        return this.overrides.get('check-for-updates')(manual);
+      }
+      return { available: false, currentVersion: '1.0.3' };
+    });
+    ipcMain.handle('download-update', async () => {
+      this.recordCall('download-update', null);
+      return { success: true };
+    });
+    ipcMain.handle('open-update-url', async (_event, url) => {
+      this.recordCall('open-update-url', url);
+      return { success: true };
+    });
+    ipcMain.handle('get-app-version', async () => {
+      this.recordCall('get-app-version', null);
+      return '1.0.3';
+    });
   }
 
   // Push event helpers to send events into a BrowserWindow webContents

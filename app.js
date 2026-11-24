@@ -119,19 +119,16 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeAudio = audioA;
   let idleAudio = audioB;
 
-  // Electron WebAudio CORS Guard: Ensure crossOrigin is set BEFORE any src is assigned
-  if (isElectron) {
-    if (audioA) audioA.crossOrigin = 'anonymous';
-    if (audioB) audioB.crossOrigin = 'anonymous';
-  }
-
+  // Web Audio Clean Signal Path: Ensure crossOrigin is ALWAYS set before any src is assigned on both decks
   if (audioA) {
+    audioA.crossOrigin = 'anonymous';
     audioA.volume = 1;
     audioA.addEventListener('loadedmetadata', () => {
       console.log(`[DIAG-AUDIO] Deck A loadedmetadata: duration=${audioA.duration}s (${Math.floor(audioA.duration/60)}:${Math.floor(audioA.duration%60)}), src=${audioA.src}`);
     });
   }
   if (audioB) {
+    audioB.crossOrigin = 'anonymous';
     audioB.volume = 1;
     audioB.addEventListener('loadedmetadata', () => {
       console.log(`[DIAG-AUDIO] Deck B loadedmetadata: duration=${audioB.duration}s (${Math.floor(audioB.duration/60)}:${Math.floor(audioB.duration%60)}), src=${audioB.src}`);
@@ -1362,8 +1359,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isAudioPlaying) return;
 
     const curTime = playbackDeck.currentTime;
-    const dur = (isFinite(playbackDeck.duration) && playbackDeck.duration > 0)
-      ? playbackDeck.duration
+    const rawDur = playbackDeck.duration;
+    const dur = (Number.isFinite(rawDur) && rawDur > 0 && !Number.isNaN(rawDur))
+      ? rawDur
       : (currentTrack?.duration || 214);
     const pct = dur > 0 ? (curTime / dur) * 100 : 0;
     savePlaybackCheckpoint(curTime);
@@ -2352,8 +2350,19 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const outgoingDeck = activeAudio;
       const interruptedIncomingDeck = idleAudio;
-      rampDeckAudioGain(outgoingDeck, 1, 0.04);
-      rampDeckAudioGain(interruptedIncomingDeck, 0, 0.04);
+      const outGain = getDeckGainNode(outgoingDeck);
+      const inGain = getDeckGainNode(interruptedIncomingDeck);
+      if (audioCtx && outGain && inGain) {
+        const now = audioCtx.currentTime;
+        outGain.gain.cancelScheduledValues(now);
+        outGain.gain.setValueAtTime(Math.max(0, Math.min(1, Number(outGain.gain.value) || 1)), now);
+        inGain.gain.cancelScheduledValues(now);
+        inGain.gain.setValueAtTime(Math.max(0, Math.min(1, Number(inGain.gain.value) || 0)), now);
+        inGain.gain.linearRampToValueAtTime(0, now + 0.28);
+      } else {
+        rampDeckAudioGain(outgoingDeck, 1, 0.04);
+        rampDeckAudioGain(interruptedIncomingDeck, 0, 0.04);
+      }
       await waitForAudioRamp(50);
       if (transitionSeq !== seamlessTransitionSequence) return;
       interruptedIncomingDeck.pause();
@@ -2444,9 +2453,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       idleAudio.preload = 'auto';
-      if (isElectron) {
-        idleAudio.crossOrigin = 'anonymous';
-      }
+      idleAudio.crossOrigin = 'anonymous';
       console.log(`[DIAG-AUDIO] [TRIGGER: loadAndSeamlessTransition] Setting idleAudio (${idleAudio === audioA ? 'Deck A' : 'Deck B'}) src for track:`, nextTrack.id, nextTrack.title, 'url:', streamUrl);
       idleAudio.src = streamUrl;
       idleAudio.dataset.trackId = nextTrack.id;
@@ -2522,12 +2529,12 @@ document.addEventListener('DOMContentLoaded', () => {
       ? Boolean(manualOpt.isManual)
       : Boolean(manualOpt);
 
-    // 300ms Manual-Skip Micro-Fade: Smooth click-free transition on user skip, full crossfade on auto-advance
+    // 280ms Manual-Skip Micro-Fade: Smooth click-free transition on user skip, full crossfade on auto-advance
     const effectiveFadeSec = isManual
-      ? 0.3
+      ? 0.28
       : (crossfadeSeconds > 0 ? crossfadeSeconds : 1.2);
     console.log(`[Crossfade] crossfade start: transition from "${currentTrack?.title}" to "${nextTrack.title}" (${effectiveFadeSec}s)`);
-    showToast(isManual ? `Skip Micro-Fade (300ms) ⚡` : `DJ Mashup Blend (${effectiveFadeSec.toFixed(1)}s) 🎧`);
+    showToast(isManual ? `Skip Micro-Fade (280ms) ⚡` : `DJ Mashup Blend (${effectiveFadeSec.toFixed(1)}s) 🎧`);
 
     const incomingBass = (activeAudio === audioA) ? bassFilterB : bassFilterA;
     const outgoingBass = (activeAudio === audioA) ? bassFilterA : bassFilterB;
@@ -2573,6 +2580,29 @@ document.addEventListener('DOMContentLoaded', () => {
     currentCrossfadeProgress = 0;
     broadcastEchoRoomState(true);
 
+    const outgoingGain = getDeckGainNode(activeAudio);
+    const incomingGain = getDeckGainNode(idleAudio);
+
+    // 64-Point Equal-Power Curve via setValueCurveAtTime on Web Audio hardware clock
+    // Eliminates JavaScript timer throttling in background/minimized windows completely
+    if (audioCtx && outgoingGain && incomingGain) {
+      const now = audioCtx.currentTime;
+      const CURVE_POINTS = 64;
+      const outCurve = new Float32Array(CURVE_POINTS);
+      const inCurve = new Float32Array(CURVE_POINTS);
+      for (let i = 0; i < CURVE_POINTS; i++) {
+        const p = i / (CURVE_POINTS - 1);
+        outCurve[i] = Math.cos(p * 0.5 * Math.PI);
+        inCurve[i] = Math.sin(p * 0.5 * Math.PI);
+      }
+      outgoingGain.gain.cancelScheduledValues(now);
+      incomingGain.gain.cancelScheduledValues(now);
+      outgoingGain.gain.setValueAtTime(Math.max(0, Math.min(1, Number(outgoingGain.gain.value) || 1)), now);
+      incomingGain.gain.setValueAtTime(0, now);
+      outgoingGain.gain.setValueCurveAtTime(outCurve, now, effectiveFadeSec);
+      incomingGain.gain.setValueCurveAtTime(inCurve, now, effectiveFadeSec);
+    }
+
     let lastCrossfadeDiagnosticStep = 0;
     const startTime = Date.now();
     const durationMs = effectiveFadeSec * 1000;
@@ -2592,12 +2622,14 @@ document.addEventListener('DOMContentLoaded', () => {
         broadcastEchoRoomState(true);
       }
 
-      // 1. Equal-power volume curve (constant perceived loudness)
+      // 1. Equal-power volume curve fallback if not using hardware Web Audio curve
       const outVol = Math.cos(progress * 0.5 * Math.PI);
       const inVol = Math.sin(progress * 0.5 * Math.PI);
 
-      rampDeckAudioGain(activeAudio, outVol, 0.05);
-      rampDeckAudioGain(idleAudio, inVol, 0.05);
+      if (!audioCtx || audioGraphFallbackActive || !outgoingGain || !incomingGain) {
+        rampDeckAudioGain(activeAudio, outVol, 0.05);
+        rampDeckAudioGain(idleAudio, inVol, 0.05);
+      }
 
       const diagnosticStep = Math.min(4, Math.floor(progress * 4));
       if (diagnosticStep > lastCrossfadeDiagnosticStep) {
@@ -2640,8 +2672,16 @@ document.addEventListener('DOMContentLoaded', () => {
       if (progress >= 1.0) {
         clearInterval(thisFadeInterval);
         if (crossfadeInterval === thisFadeInterval) crossfadeInterval = null;
-        rampDeckAudioGain(activeAudio, 0, 0.04);
-        rampDeckAudioGain(idleAudio, 1, 0.04);
+        if (audioCtx && outgoingGain && incomingGain) {
+          const nowEnd = audioCtx.currentTime;
+          outgoingGain.gain.cancelScheduledValues(nowEnd);
+          outgoingGain.gain.setValueAtTime(0, nowEnd);
+          incomingGain.gain.cancelScheduledValues(nowEnd);
+          incomingGain.gain.setValueAtTime(1, nowEnd);
+        } else {
+          rampDeckAudioGain(activeAudio, 0, 0.04);
+          rampDeckAudioGain(idleAudio, 1, 0.04);
+        }
 
         crossfadePromotionTimeout = setTimeout(() => {
           crossfadePromotionTimeout = null;
@@ -2710,11 +2750,24 @@ document.addEventListener('DOMContentLoaded', () => {
     isPreparingNextTrack = false;
     preparedTrack = null;
 
-    // Fade any audible deck to zero before pausing or replacing its source.
+    // 280ms Manual-Skip Micro-Fade: Smooth click-free fade before switching sources
     const hadAudibleDeck = [activeAudio, idleAudio].some(deck => deck && !deck.paused);
-    rampDeckAudioGain(activeAudio, 0, 0.04);
-    rampDeckAudioGain(idleAudio, 0, 0.04);
-    if (hadAudibleDeck) await waitForAudioRamp(50);
+    if (audioCtx) {
+      const now = audioCtx.currentTime;
+      [activeAudio, idleAudio].forEach(deck => {
+        const g = getDeckGainNode(deck);
+        if (g) {
+          const curVal = Math.max(0, Math.min(1, Number(g.gain.value) || 0));
+          g.gain.cancelScheduledValues(now);
+          g.gain.setValueAtTime(curVal, now);
+          g.gain.linearRampToValueAtTime(0, now + 0.28);
+        }
+      });
+    } else {
+      rampDeckAudioGain(activeAudio, 0, 0.28);
+      rampDeckAudioGain(idleAudio, 0, 0.28);
+    }
+    if (hadAudibleDeck) await waitForAudioRamp(280);
     if (myId !== playRequestId) return;
     activeAudio.pause();
     idleAudio.pause();
@@ -2789,9 +2842,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (isPlayableAudioUrl(streamUrl)) {
       pauseYouTubeEngine();
-      if (isElectron) {
-        activeAudio.crossOrigin = 'anonymous';
-      }
+      activeAudio.crossOrigin = 'anonymous';
       console.log(`[DIAG-AUDIO] [TRIGGER: playTrackDirect] Setting activeAudio (${activeAudio === audioA ? 'Deck A' : 'Deck B'}) src to:`, streamUrl, 'for track:', track.id, track.title);
       activeAudio.src = streamUrl;
       activeAudio.dataset.trackId = track.id;
@@ -3107,7 +3158,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleSeek(e) {
     const rect = dockSeekContainer.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const dur = isYtActive ? (ytPlayer?.getDuration() || currentTrack?.duration || 214) : (activeAudio.duration || currentTrack?.duration || 214);
+    const rawDur = isYtActive ? (ytPlayer?.getDuration() || currentTrack?.duration || 214) : (activeAudio.duration || currentTrack?.duration || 214);
+    const dur = (Number.isFinite(rawDur) && rawDur > 0 && !Number.isNaN(rawDur)) ? rawDur : (currentTrack?.duration || 214);
     seekAudioTo(pos * dur);
   }
 
@@ -3117,7 +3169,8 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       activeAudio.currentTime = seconds;
     }
-    const dur = isYtActive ? (ytPlayer?.getDuration() || currentTrack?.duration || 214) : (activeAudio.duration || currentTrack?.duration || 214);
+    const rawDur = isYtActive ? (ytPlayer?.getDuration() || currentTrack?.duration || 214) : (activeAudio.duration || currentTrack?.duration || 214);
+    const dur = (Number.isFinite(rawDur) && rawDur > 0 && !Number.isNaN(rawDur)) ? rawDur : (currentTrack?.duration || 214);
     const pos = dur > 0 ? (seconds / dur) : 0;
     if (dockSeekFill) dockSeekFill.style.width = `${pos * 100}%`;
     if (dockSeekThumb) dockSeekThumb.style.left = `${pos * 100}%`;
@@ -6251,6 +6304,194 @@ document.addEventListener('DOMContentLoaded', () => {
       savePersistentState();
     });
   });
+
+  // ------------------------------------------------------------------------
+  // IN-APP SOFTWARE UPDATER (GitHub Releases)
+  // ------------------------------------------------------------------------
+  const appUpdateBanner = document.getElementById('appUpdateBanner');
+  const updateBannerTitle = document.getElementById('updateBannerTitle');
+  const updateNotesToggle = document.getElementById('updateNotesToggle');
+  const updateNotesCollapse = document.getElementById('updateNotesCollapse');
+  const updateNotesText = document.getElementById('updateNotesText');
+  const updateProgressContainer = document.getElementById('updateProgressContainer');
+  const updateProgressFill = document.getElementById('updateProgressFill');
+  const updateProgressText = document.getElementById('updateProgressText');
+  const updateActionBtn = document.getElementById('updateActionBtn');
+  const updateDismissBtn = document.getElementById('updateDismissBtn');
+  const settingsCurrentVersionText = document.getElementById('settingsCurrentVersionText');
+  const settingsUpdateStatusPill = document.getElementById('settingsUpdateStatusPill');
+  const settingsCheckUpdatesBtn = document.getElementById('settingsCheckUpdatesBtn');
+
+  let activeUpdateData = null;
+  let isDownloadingUpdate = false;
+  let isUpdateDownloaded = false;
+
+  function showUpdateBanner(updateData) {
+    if (!updateData || !appUpdateBanner) return;
+    activeUpdateData = updateData;
+    if (updateBannerTitle) {
+      updateBannerTitle.textContent = `MeloPair v${updateData.version} is available`;
+    }
+    if (updateNotesText) {
+      updateNotesText.textContent = updateData.releaseNotes || 'New improvements, audio engine enhancements, and bug fixes.';
+    }
+    if (updateProgressContainer) updateProgressContainer.classList.add('hidden');
+    if (updateActionBtn) {
+      updateActionBtn.disabled = false;
+      updateActionBtn.textContent = 'Update Now';
+    }
+    appUpdateBanner.classList.remove('hidden');
+  }
+
+  function initAppUpdater() {
+    if (!window.echoApi || typeof window.echoApi.checkForUpdates !== 'function') return;
+
+    if (typeof window.echoApi.getAppVersion === 'function') {
+      window.echoApi.getAppVersion().then(v => {
+        if (v && settingsCurrentVersionText) {
+          settingsCurrentVersionText.textContent = `MeloPair Desktop v${v}`;
+        }
+      }).catch(() => {});
+    }
+
+    if (updateNotesToggle && updateNotesCollapse) {
+      updateNotesToggle.addEventListener('click', () => {
+        const isHidden = updateNotesCollapse.classList.contains('hidden');
+        if (isHidden) {
+          updateNotesCollapse.classList.remove('hidden');
+          updateNotesToggle.textContent = "What's New ▴";
+          updateNotesToggle.setAttribute('aria-expanded', 'true');
+        } else {
+          updateNotesCollapse.classList.add('hidden');
+          updateNotesToggle.textContent = "What's New ▾";
+          updateNotesToggle.setAttribute('aria-expanded', 'false');
+        }
+      });
+    }
+
+    if (updateDismissBtn && appUpdateBanner) {
+      updateDismissBtn.addEventListener('click', () => {
+        appUpdateBanner.classList.add('hidden');
+      });
+    }
+
+    if (updateActionBtn) {
+      updateActionBtn.addEventListener('click', async () => {
+        if (isUpdateDownloaded) {
+          try {
+            await window.echoApi.downloadUpdate();
+          } catch (e) {
+            console.error('[Updater] Launch installer error:', e);
+          }
+          return;
+        }
+
+        if (isDownloadingUpdate) return;
+        isDownloadingUpdate = true;
+        updateActionBtn.disabled = true;
+        updateActionBtn.textContent = 'Downloading...';
+        if (updateProgressContainer) updateProgressContainer.classList.remove('hidden');
+
+        try {
+          const res = await window.echoApi.downloadUpdate();
+          if (!res || !res.success) {
+            updateActionBtn.disabled = false;
+            updateActionBtn.textContent = 'Retry Update';
+            isDownloadingUpdate = false;
+            if (updateProgressContainer) updateProgressContainer.classList.add('hidden');
+            showToast('Download failed. Opening releases page... ⚠️');
+            window.echoApi.openUpdateUrl?.(activeUpdateData?.releasePageUrl);
+          }
+        } catch (err) {
+          updateActionBtn.disabled = false;
+          updateActionBtn.textContent = 'Retry Update';
+          isDownloadingUpdate = false;
+          if (updateProgressContainer) updateProgressContainer.classList.add('hidden');
+          showToast('Update download error ⚠️');
+        }
+      });
+    }
+
+    if (settingsCheckUpdatesBtn) {
+      settingsCheckUpdatesBtn.addEventListener('click', async () => {
+        settingsCheckUpdatesBtn.disabled = true;
+        settingsCheckUpdatesBtn.textContent = 'Checking...';
+        if (settingsUpdateStatusPill) {
+          settingsUpdateStatusPill.textContent = 'Checking...';
+          settingsUpdateStatusPill.className = 'update-status-pill';
+        }
+        try {
+          const res = await window.echoApi.checkForUpdates(true);
+          settingsCheckUpdatesBtn.disabled = false;
+          settingsCheckUpdatesBtn.textContent = 'Check for Updates';
+          if (res && res.available) {
+            showUpdateBanner(res);
+            if (settingsUpdateStatusPill) {
+              settingsUpdateStatusPill.textContent = `v${res.version} available`;
+              settingsUpdateStatusPill.className = 'update-status-pill update-available';
+            }
+            showToast(`Update available: v${res.version} 🎉`);
+          } else {
+            if (settingsUpdateStatusPill) {
+              settingsUpdateStatusPill.textContent = 'Up to date';
+              settingsUpdateStatusPill.className = 'update-status-pill';
+            }
+            showToast('MeloPair is already up to date! ✨');
+          }
+        } catch (e) {
+          settingsCheckUpdatesBtn.disabled = false;
+          settingsCheckUpdatesBtn.textContent = 'Check for Updates';
+          if (settingsUpdateStatusPill) settingsUpdateStatusPill.textContent = 'Check failed';
+          showToast('Could not check for updates');
+        }
+      });
+    }
+
+    if (typeof window.echoApi.onUpdateStatus === 'function') {
+      window.echoApi.onUpdateStatus((status) => {
+        if (!status) return;
+        if (status.type === 'available' && status.data) {
+          showUpdateBanner(status.data);
+          if (settingsUpdateStatusPill) {
+            settingsUpdateStatusPill.textContent = `v${status.data.version} available`;
+            settingsUpdateStatusPill.className = 'update-status-pill update-available';
+          }
+        } else if (status.type === 'progress') {
+          isDownloadingUpdate = true;
+          if (updateProgressContainer) updateProgressContainer.classList.remove('hidden');
+          const pct = Math.max(0, Math.min(100, status.progress || 0));
+          if (updateProgressFill) updateProgressFill.style.width = `${pct}%`;
+          if (updateProgressText) updateProgressText.textContent = `${pct}%`;
+          if (updateActionBtn) {
+            updateActionBtn.disabled = true;
+            updateActionBtn.textContent = `Downloading ${pct}%`;
+          }
+        } else if (status.type === 'downloaded') {
+          isDownloadingUpdate = false;
+          isUpdateDownloaded = true;
+          if (updateProgressContainer) updateProgressContainer.classList.add('hidden');
+          if (updateActionBtn) {
+            updateActionBtn.disabled = false;
+            updateActionBtn.textContent = 'Install & Restart';
+          }
+          if (updateBannerTitle) {
+            updateBannerTitle.textContent = `MeloPair v${status.version || activeUpdateData?.version || ''} ready to install!`;
+          }
+          showToast('Update downloaded! Click "Install & Restart" to finish. 🚀');
+        } else if (status.type === 'error') {
+          isDownloadingUpdate = false;
+          if (updateProgressContainer) updateProgressContainer.classList.add('hidden');
+          if (updateActionBtn) {
+            updateActionBtn.disabled = false;
+            updateActionBtn.textContent = 'Retry Update';
+          }
+          showToast('Update download failed ⚠️');
+        }
+      });
+    }
+  }
+
+  initAppUpdater();
 
   // Beat Strobe Toggle in Studio FX
   const beatStrobeToggle = document.getElementById('beatStrobeToggle');

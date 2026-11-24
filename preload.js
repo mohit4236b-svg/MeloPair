@@ -52,5 +52,14 @@ contextBridge.exposeInMainWorld('echoApi', {
     ipcRenderer.on('beep-fusion-stop', () => cb());
   },
   importPlaylistMetadata: (url) => ipcRenderer.invoke('import-playlist-metadata', url),
-  exportLyricCard: (dataUrl, fileName) => ipcRenderer.invoke('export-lyric-card', { dataUrl, fileName })
+  exportLyricCard: (dataUrl, fileName) => ipcRenderer.invoke('export-lyric-card', { dataUrl, fileName }),
+  checkForUpdates: (manual = false) => ipcRenderer.invoke('check-for-updates', manual),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  openUpdateUrl: (url) => ipcRenderer.invoke('open-update-url', url),
+  onUpdateStatus: (cb) => {
+    const listener = (_event, status) => cb(status);
+    ipcRenderer.on('update-status', listener);
+    return () => ipcRenderer.removeListener('update-status', listener);
+  },
+  getAppVersion: () => ipcRenderer.invoke('get-app-version')
 });

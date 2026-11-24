@@ -10816,3 +10816,233 @@ body:has(#nowPlayingModal:not(.hidden)) .track-art-backdrop {
   font-size: 20px;
   flex-shrink: 0;
 }
+
+/* ==========================================================================
+   Sequoia Frosted-Glass In-App Software Update Banner
+   ========================================================================== */
+.app-update-banner {
+  margin: 12px 24px 0 24px;
+  background: rgba(28, 28, 30, 0.72);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: all 0.3s cubic-bezier(0.22, 1.25, 0.36, 1);
+  overflow: hidden;
+  z-index: 100;
+  animation: bannerSlideDown 0.35s cubic-bezier(0.22, 1.25, 0.36, 1);
+}
+
+.app-update-banner.hidden {
+  display: none !important;
+}
+
+@keyframes bannerSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.update-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+}
+
+.update-banner-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(250, 45, 72, 0.14);
+  border: 1px solid rgba(250, 45, 72, 0.28);
+  color: #FA2D48;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.update-banner-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.update-banner-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.update-banner-title {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: #FFFFFF;
+  letter-spacing: -0.01em;
+}
+
+.update-notes-toggle {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.update-notes-toggle:hover {
+  color: #FA2D48;
+  background: rgba(250, 45, 72, 0.08);
+}
+
+.update-notes-collapse {
+  max-height: 120px;
+  overflow-y: auto;
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.update-notes-collapse.hidden {
+  display: none !important;
+}
+
+.update-notes-text {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.update-progress-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.update-progress-container.hidden {
+  display: none !important;
+}
+
+.update-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background: #FA2D48;
+  border-radius: 999px;
+  transition: width 0.15s ease;
+}
+
+.update-progress-text {
+  font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  min-width: 32px;
+  text-align: right;
+}
+
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.update-action-btn {
+  background: #FA2D48;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.22, 1.25, 0.36, 1);
+  box-shadow: 0 2px 8px rgba(250, 45, 72, 0.3);
+}
+
+.update-action-btn:hover {
+  background: #E11D48;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(250, 45, 72, 0.4);
+}
+
+.update-action-btn:active {
+  transform: scale(0.95);
+}
+
+.update-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.update-dismiss-btn {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.update-dismiss-btn:hover {
+  color: #FFFFFF;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.update-dismiss-btn:active {
+  transform: scale(0.95);
+}
+
+/* Settings About update pill */
+.update-status-pill {
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-status-pill.update-available {
+  background: rgba(250, 45, 72, 0.14);
+  border-color: rgba(250, 45, 72, 0.3);
+  color: #FA2D48;
+  font-weight: 600;
+}
+

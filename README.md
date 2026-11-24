@@ -4,7 +4,7 @@
 
 High-bitrate desktop music streaming with pioneer-style dual-deck crossfade, 3-line kinetic synced lyrics, Studio FX, and worldwide multi-device Rooms.
 
-[![Download for Windows](https://img.shields.io/badge/Download_for_Windows-.exe-7C4DFF?style=for-the-badge&logo=windows)](https://github.com/mohit4236b-svg/MeloPair/releases/latest/download/MeloPair-Setup-1.0.3.exe)
+[![Download for Windows](https://img.shields.io/badge/Download_for_Windows-.exe-7C4DFF?style=for-the-badge&logo=windows)](https://github.com/mohit4236b-svg/MeloPair/releases/latest/download/MeloPair-Setup-1.0.4.exe)
 
 [Fallback: browse MeloPair releases](https://github.com/mohit4236b-svg/MeloPair/releases/latest)
 
@@ -26,7 +26,7 @@ High-bitrate desktop music streaming with pioneer-style dual-deck crossfade, 3-l
 
 ## Install on Windows
 
-1. Download **MeloPair-Setup-1.0.3.exe** from the [latest release](https://github.com/mohit4236b-svg/MeloPair/releases/latest).
+1. Download **MeloPair-Setup-1.0.4.exe** from the [latest release](https://github.com/mohit4236b-svg/MeloPair/releases/latest).
 2. Run the installer. It installs per-user and does not require administrator access.
 3. If Windows SmartScreen warns that the unsigned indie app is unrecognized, choose **More info → Run anyway** only if you trust this download.
 

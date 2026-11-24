@@ -1708,6 +1708,13 @@ app.whenReady().then(() => {
   ensureUserBinaries();
   startAudioProxy();
   createWindow();
+  setTimeout(() => {
+    checkGitHubReleases(false).then(info => {
+      if (info && info.available && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-status', { type: 'available', data: info });
+      }
+    }).catch(e => console.warn('[Updater] Auto-check error:', e));
+  }, 6000);
   const startupAuthUrl = process.argv.find(arg => /^echoplayer:\/\/auth(?:[/?#]|$)/i.test(arg));
   if (startupAuthUrl && mainWindow) {
     mainWindow.webContents.once('did-finish-load', () => void handleFirebaseAuthProtocol(startupAuthUrl));
@@ -3143,4 +3150,187 @@ ipcMain.handle('export-lyric-card', async (event, { dataUrl, fileName }) => {
   } catch (error) {
     return { success: false, message: error.message };
   }
+});
+
+// ---------------------------------------------------------------------------
+// GitHub Releases In-App Updater for Desktop
+// ---------------------------------------------------------------------------
+let lastUpdateCheckTime = 0;
+let cachedUpdateInfo = null;
+const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+function isNewerVersion(remote, local) {
+  if (!remote || !local) return false;
+  const parseParts = (v) => String(v).replace(/^v/i, '').trim().split('.').map(n => parseInt(n, 10) || 0);
+  const r = parseParts(remote);
+  const l = parseParts(local);
+  for (let i = 0; i < Math.max(r.length, l.length, 3); i++) {
+    const rv = r[i] || 0;
+    const lv = l[i] || 0;
+    if (rv > lv) return true;
+    if (rv < lv) return false;
+  }
+  return false;
+}
+
+function checkGitHubReleases(manual = false) {
+  return new Promise((resolve) => {
+    const now = Date.now();
+    if (!manual && cachedUpdateInfo && (now - lastUpdateCheckTime < UPDATE_CHECK_INTERVAL_MS)) {
+      return resolve(cachedUpdateInfo);
+    }
+
+    const options = {
+      hostname: 'api.github.com',
+      path: '/repos/mohit4236b-svg/MeloPair/releases/latest',
+      method: 'GET',
+      headers: {
+        'User-Agent': 'MeloPair-Desktop/' + app.getVersion(),
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          console.warn('[Updater] GitHub API returned status:', res.statusCode);
+          return resolve({ available: false, currentVersion: app.getVersion(), error: `HTTP ${res.statusCode}` });
+        }
+        try {
+          const release = JSON.parse(data);
+          const rawTag = release.tag_name || release.name || '';
+          const remoteVersion = rawTag.replace(/^v/i, '').trim();
+          const currentVersion = app.getVersion();
+
+          lastUpdateCheckTime = Date.now();
+
+          if (isNewerVersion(remoteVersion, currentVersion)) {
+            const assets = release.assets || [];
+            const exeAsset = assets.find(a => (a.name || '').toLowerCase().endsWith('.exe')) || assets[0];
+            const updateData = {
+              available: true,
+              version: remoteVersion,
+              currentVersion: currentVersion,
+              releaseNotes: release.body || 'New improvements and bug fixes.',
+              downloadUrl: exeAsset ? exeAsset.browser_download_url : release.html_url,
+              releasePageUrl: release.html_url,
+              publishedAt: release.published_at || new Date().toISOString(),
+              assetName: exeAsset ? exeAsset.name : `MeloPair-Setup-${remoteVersion}.exe`,
+              assetSize: exeAsset ? exeAsset.size : 0
+            };
+            cachedUpdateInfo = updateData;
+            return resolve(updateData);
+          } else {
+            const notAvail = { available: false, currentVersion: currentVersion };
+            cachedUpdateInfo = notAvail;
+            return resolve(notAvail);
+          }
+        } catch (e) {
+          console.warn('[Updater] Failed to parse release response:', e);
+          resolve({ available: false, currentVersion: app.getVersion(), error: e.message });
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      console.warn('[Updater] Network error checking releases:', err);
+      resolve({ available: false, currentVersion: app.getVersion(), error: err.message });
+    });
+
+    req.end();
+  });
+}
+
+function downloadFileWithRedirects(fileUrl, destPath, onProgress, maxRedirects = 5) {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) return reject(new Error('Too many redirects'));
+    let parsed;
+    try {
+      parsed = new URL(fileUrl);
+    } catch (e) {
+      return reject(e);
+    }
+    const client = parsed.protocol === 'http:' ? http : https;
+    const req = client.get(fileUrl, {
+      headers: {
+        'User-Agent': 'MeloPair-Desktop/' + app.getVersion(),
+        'Accept': 'application/octet-stream'
+      }
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        let redirectUrl = res.headers.location;
+        if (!redirectUrl.startsWith('http')) {
+          redirectUrl = new URL(redirectUrl, fileUrl).href;
+        }
+        res.resume();
+        return downloadFileWithRedirects(redirectUrl, destPath, onProgress, maxRedirects - 1)
+          .then(resolve)
+          .catch(reject);
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`Server returned HTTP ${res.statusCode}`));
+      }
+      const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+      let downloadedBytes = 0;
+      const fileStream = fs.createWriteStream(destPath);
+      res.on('data', (chunk) => {
+        downloadedBytes += chunk.length;
+        if (totalBytes > 0 && typeof onProgress === 'function') {
+          const pct = Math.min(100, Math.round((downloadedBytes / totalBytes) * 100));
+          onProgress(pct, downloadedBytes, totalBytes);
+        }
+      });
+      res.pipe(fileStream);
+      fileStream.on('finish', () => {
+        fileStream.close(() => resolve(destPath));
+      });
+      fileStream.on('error', (err) => {
+        fs.unlink(destPath, () => {});
+        reject(err);
+      });
+    });
+    req.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+ipcMain.handle('check-for-updates', async (_event, manual = false) => {
+  const info = await checkGitHubReleases(Boolean(manual));
+  return info;
+});
+
+ipcMain.handle('download-update', async () => {
+  if (!cachedUpdateInfo || !cachedUpdateInfo.available || !cachedUpdateInfo.downloadUrl) {
+    return { success: false, error: 'No update available' };
+  }
+  const destName = cachedUpdateInfo.assetName || `MeloPair-Setup-${cachedUpdateInfo.version}.exe`;
+  const destPath = path.join(app.getPath('temp'), destName);
+
+  try {
+    mainWindow?.webContents?.send('update-status', { type: 'progress', progress: 0 });
+    await downloadFileWithRedirects(cachedUpdateInfo.downloadUrl, destPath, (pct, downloaded, total) => {
+      mainWindow?.webContents?.send('update-status', { type: 'progress', progress: pct, downloaded, total });
+    });
+    mainWindow?.webContents?.send('update-status', { type: 'downloaded', filePath: destPath, version: cachedUpdateInfo.version });
+    await shell.openPath(destPath);
+    return { success: true, filePath: destPath };
+  } catch (err) {
+    console.error('[Updater] Download error:', err);
+    mainWindow?.webContents?.send('update-status', { type: 'error', error: err.message });
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('open-update-url', async (_event, url) => {
+  const targetUrl = url || cachedUpdateInfo?.releasePageUrl || 'https://github.com/mohit4236b-svg/MeloPair/releases';
+  await shell.openExternal(targetUrl);
+  return { success: true };
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
 });

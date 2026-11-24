@@ -1,6 +1,6 @@
 {
   "name": "echo-ambient-player",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "MeloPair music player with shared listening rooms, real-time sync, and synced lyrics",
   "main": "main.js",
   "scripts": {

@@ -253,6 +253,36 @@
         </div>
       </header>
 
+      <!-- Sequoia Frosted-Glass In-App Update Banner -->
+      <div id="appUpdateBanner" class="app-update-banner hidden" role="region" aria-label="Software Update">
+        <div class="update-banner-content">
+          <div class="update-banner-badge">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            </svg>
+          </div>
+          <div class="update-banner-info">
+            <div class="update-banner-title-row">
+              <span class="update-banner-title" id="updateBannerTitle">MeloPair update available</span>
+              <button type="button" class="update-notes-toggle" id="updateNotesToggle" aria-expanded="false">What's New ▾</button>
+            </div>
+            <div class="update-notes-collapse hidden" id="updateNotesCollapse">
+              <div class="update-notes-text" id="updateNotesText"></div>
+            </div>
+            <div class="update-progress-container hidden" id="updateProgressContainer">
+              <div class="update-progress-bar">
+                <div class="update-progress-fill" id="updateProgressFill" style="width: 0%;"></div>
+              </div>
+              <span class="update-progress-text" id="updateProgressText">0%</span>
+            </div>
+          </div>
+          <div class="update-banner-actions">
+            <button type="button" class="update-action-btn" id="updateActionBtn">Update Now</button>
+            <button type="button" class="update-dismiss-btn" id="updateDismissBtn" title="Dismiss">✕</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Center Main Content Views -->
       <div class="stage-views-container">
         <!-- VIEW 2: VISUALIZER (Full Canvas Audio Spectrum) -->
@@ -1014,6 +1044,28 @@
                   <div class="mp-profile-actions"><button class="pill-btn" id="settingsImportTasteBtn" type="button">Import Listening History / Taste</button><button class="pill-btn sub" id="settingsFeatureTourBtn" type="button">Reset &amp; Replay Welcome Tour</button></div>
                 </div>
               </div>
+
+              <!-- Category 5: About MeloPair & Updates -->
+              <div class="settings-card" style="margin-top: 16px;">
+                <div class="settings-card-header">
+                  <div class="card-icon">✨</div>
+                  <div>
+                    <h3>About MeloPair &amp; Updates</h3>
+                    <p>Desktop version, release channel &amp; GitHub in-app updates</p>
+                  </div>
+                </div>
+
+                <div class="setting-item">
+                  <div class="setting-label-col">
+                    <span class="setting-title">Desktop Version</span>
+                    <span class="setting-desc" id="settingsCurrentVersionText">MeloPair Desktop v1.0.3</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <span class="update-status-pill" id="settingsUpdateStatusPill">Up to date</span>
+                    <button class="pill-btn" id="settingsCheckUpdatesBtn" type="button">Check for Updates</button>
+                  </div>
+                </div>
+              </div>
             </div>
             </div>
           </div>
@@ -1594,8 +1646,8 @@
   </div>
 
   <!-- Dual Audio Engine (For Gapless Beat Crossfade) -->
-  <audio id="audioA" preload="auto"></audio>
-  <audio id="audioB" preload="auto"></audio>
+  <audio id="audioA" preload="auto" crossorigin="anonymous"></audio>
+  <audio id="audioB" preload="auto" crossorigin="anonymous"></audio>
 
   <!-- Universal YouTube Audio Engine (Zero-Block, Instant Playback) -->
   <div id="ytPlayerContainer" style="position:fixed;bottom:-9999px;left:-9999px;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-999;overflow:hidden;">
